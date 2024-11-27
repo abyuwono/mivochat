@@ -56,9 +56,11 @@ document.addEventListener('DOMContentLoaded', () => {
         const socketURL = window.location.origin;
         socket = io(socketURL, {
             path: '/.netlify/functions/socketio',
-            transports: ['websocket'],
+            transports: ['websocket', 'polling'],
             reconnectionAttempts: 5,
-            reconnectionDelay: 1000
+            reconnectionDelay: 1000,
+            autoConnect: true,
+            forceNew: true
         });
 
         socket.on('connect', () => {
@@ -69,6 +71,11 @@ document.addEventListener('DOMContentLoaded', () => {
         socket.on('connect_error', (error) => {
             console.error('Connection error:', error);
             showSystemMessage('Connection error: ' + error.message);
+        });
+
+        socket.on('disconnect', (reason) => {
+            console.log('Disconnected:', reason);
+            showSystemMessage('Disconnected: ' + reason);
         });
 
         socket.on('room-joined', ({ roomId }) => {

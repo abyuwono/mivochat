@@ -29,10 +29,15 @@ exports.handler = function(event, context) {
     }
 
     // Handle WebSocket upgrade
-    if (event.headers['upgrade']?.toLowerCase() !== 'websocket') {
+    if (!event.headers.upgrade || event.headers.upgrade.toLowerCase() !== 'websocket') {
         return {
             statusCode: 426,
-            body: 'Upgrade Required'
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                message: 'Upgrade Required'
+            })
         };
     }
 
@@ -43,13 +48,16 @@ exports.handler = function(event, context) {
             credentials: true
         },
         path: '/.netlify/functions/socketio',
-        transports: ['websocket'],
+        transports: ['websocket', 'polling'],
         pingTimeout: 10000,
-        pingInterval: 5000
+        pingInterval: 5000,
+        allowEIO3: true
     });
 
     io.on('connection', (socket) => {
         try {
+            console.log('New connection:', socket.id);
+            
             // Generate and store nickname for the user
             const nickname = generateNickname();
             users.set(socket.id, { nickname });
@@ -59,11 +67,13 @@ exports.handler = function(event, context) {
 
             // Handle disconnection
             socket.on('disconnect', () => {
+                console.log('User disconnected:', socket.id);
                 handleDisconnect(socket);
             });
 
             // Handle find peer request
             socket.on('find-peer', () => {
+                console.log('Finding peer for:', socket.id);
                 handleFindPeer(socket);
             });
 
@@ -74,6 +84,7 @@ exports.handler = function(event, context) {
 
             // Handle public room join
             socket.on('join-public-room', () => {
+                console.log('Joining public room:', socket.id);
                 handleJoinPublicRoom(socket);
             });
 
@@ -86,6 +97,13 @@ exports.handler = function(event, context) {
             socket.on('public-message', (data) => {
                 handlePublicMessage(socket, data);
             });
+
+            // Handle errors
+            socket.on('error', (error) => {
+                console.error('Socket error:', error);
+                socket.emit('error', { message: 'Socket error occurred' });
+            });
+
         } catch (error) {
             console.error('Error in socket connection:', error);
             socket.emit('error', { message: 'Internal server error' });
@@ -94,7 +112,12 @@ exports.handler = function(event, context) {
 
     return {
         statusCode: 200,
-        body: 'WebSocket connection established'
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            message: 'WebSocket connection established'
+        })
     };
 };
 
