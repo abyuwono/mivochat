@@ -1,54 +1,10 @@
 const { Server } = require('socket.io');
-const { Server: HttpServer } = require('http');
-const { Readable } = require('stream');
+const { parse } = require('querystring');
 
-// In-memory storage for peer connections
+// In-memory storage for peer connections and sessions
 const peers = new Map();
+const sessions = new Map();
 let io = null;
-let httpServer = null;
-
-// Create a readable stream from request body
-const createBodyStream = (body) => {
-    const stream = new Readable();
-    stream.push(body);
-    stream.push(null);
-    stream._read = () => {}; // Required for Readable streams
-    return stream;
-};
-
-// Create an event emitter-like object
-const createEventEmitter = () => {
-    const listeners = new Map();
-    return {
-        on: (event, handler) => {
-            if (!listeners.has(event)) {
-                listeners.set(event, []);
-            }
-            listeners.get(event).push(handler);
-            return this;
-        },
-        emit: (event, ...args) => {
-            const eventListeners = listeners.get(event) || [];
-            eventListeners.forEach(handler => handler(...args));
-            return true;
-        },
-        removeListener: (event, handler) => {
-            const eventListeners = listeners.get(event) || [];
-            const index = eventListeners.indexOf(handler);
-            if (index !== -1) {
-                eventListeners.splice(index, 1);
-            }
-            return this;
-        },
-        once: (event, handler) => {
-            const onceHandler = (...args) => {
-                handler(...args);
-                this.removeListener(event, onceHandler);
-            };
-            return this.on(event, onceHandler);
-        }
-    };
-};
 
 exports.handler = async (event, context) => {
     // Handle preflight requests
@@ -66,25 +22,20 @@ exports.handler = async (event, context) => {
     }
 
     try {
-        // Initialize HTTP Server and Socket.IO if not already initialized
-        if (!httpServer || !io) {
-            httpServer = new HttpServer();
-            
-            io = new Server(httpServer, {
+        // Initialize Socket.IO if not already initialized
+        if (!io) {
+            io = new Server({
                 cors: {
                     origin: '*',
                     methods: ['GET', 'POST', 'OPTIONS'],
                     credentials: true
                 },
                 transports: ['polling', 'websocket'],
-                path: '/socket.io/',
-                serveClient: false,
-                connectTimeout: 45000,
+                allowUpgrades: true,
                 pingTimeout: 20000,
                 pingInterval: 25000,
-                allowEIO3: true,
-                cookie: false,
-                perMessageDeflate: false
+                upgradeTimeout: 10000,
+                maxHttpBufferSize: 1e8
             });
 
             // Socket.IO event handlers
@@ -136,108 +87,106 @@ exports.handler = async (event, context) => {
             });
         }
 
+        // Parse query parameters
+        const queryParams = event.queryStringParameters || {};
+        const sid = queryParams.sid;
+        const transport = queryParams.transport;
+
         // Handle Socket.IO requests
-        const isSocketIoRequest = event.path.startsWith('/socket.io/');
-        
-        if (isSocketIoRequest) {
-            return await new Promise((resolve) => {
-                // Create response object
-                const response = {
-                    statusCode: 200,
-                    headers: {
-                        'Content-Type': 'application/octet-stream',
-                        'Access-Control-Allow-Origin': '*',
-                        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-                        'Access-Control-Allow-Headers': '*',
-                        'Access-Control-Allow-Credentials': 'true',
-                        'Cache-Control': 'no-cache'
-                    },
-                    isBase64Encoded: false
-                };
+        if (event.path.startsWith('/socket.io/')) {
+            const response = {
+                statusCode: 200,
+                headers: {
+                    'Content-Type': 'application/octet-stream',
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+                    'Access-Control-Allow-Headers': '*',
+                    'Access-Control-Allow-Credentials': 'true',
+                    'Cache-Control': 'no-cache'
+                }
+            };
 
-                // Create request-like object with stream capabilities
-                const req = {
-                    method: event.httpMethod,
-                    url: event.rawUrl || event.path,
-                    headers: {
-                        ...event.headers,
-                        'content-type': event.headers['content-type'] || 'application/octet-stream',
-                        'content-length': event.body ? Buffer.byteLength(event.body) : 0,
-                        'x-forwarded-for': event.headers['x-forwarded-for'] || event.requestContext?.identity?.sourceIp || '0.0.0.0'
-                    },
-                    connection: {
-                        remoteAddress: event.headers['x-forwarded-for'] || event.requestContext?.identity?.sourceIp || '0.0.0.0',
-                        encrypted: event.headers['x-forwarded-proto'] === 'https'
-                    },
-                    _body: event.body,
-                    read: function() {
-                        const body = this._body;
-                        this._body = null;
-                        return body;
-                    },
-                    setEncoding: function(encoding) {
-                        this._encoding = encoding;
-                    },
-                    ...createEventEmitter()
-                };
+            // Handle POST data for polling transport
+            if (event.httpMethod === 'POST' && transport === 'polling') {
+                const data = event.body || '';
+                const session = sessions.get(sid);
 
-                // Create response-like object
-                const res = {
-                    ...createEventEmitter(),
-                    setHeader: (key, value) => {
-                        response.headers[key.toLowerCase()] = value;
-                    },
-                    removeHeader: (key) => {
-                        delete response.headers[key.toLowerCase()];
-                    },
-                    getHeader: (key) => response.headers[key.toLowerCase()],
-                    writeHead: (status, headers) => {
-                        response.statusCode = status;
-                        if (headers) {
-                            Object.entries(headers).forEach(([key, value]) => {
-                                response.headers[key.toLowerCase()] = value;
-                            });
-                        }
-                    },
-                    write: (data) => {
-                        if (data) {
-                            const chunk = Buffer.isBuffer(data) ? data : Buffer.from(data);
-                            if (!response.body) {
-                                response.body = chunk.toString('base64');
-                            } else {
-                                response.body += chunk.toString('base64');
-                            }
-                            response.isBase64Encoded = true;
-                        }
-                    },
-                    end: (data) => {
-                        if (data) {
-                            const chunk = Buffer.isBuffer(data) ? data : Buffer.from(data);
-                            if (!response.body) {
-                                response.body = chunk.toString('base64');
-                            } else {
-                                response.body += chunk.toString('base64');
-                            }
-                            response.isBase64Encoded = true;
-                        }
-                        resolve(response);
-                    }
-                };
-
-                // Emit request data if body exists
-                if (event.body) {
-                    process.nextTick(() => {
-                        req.emit('data', event.body);
-                        req.emit('end');
-                    });
+                if (session) {
+                    session.emit('data', data);
+                    session.emit('end');
+                    response.body = 'ok';
                 } else {
-                    process.nextTick(() => {
-                        req.emit('end');
-                    });
+                    response.statusCode = 400;
+                    response.body = 'Session not found';
                 }
 
-                // Handle the request
-                io.engine.handleRequest(req, res);
+                return response;
+            }
+
+            // Handle GET requests for polling transport
+            if (event.httpMethod === 'GET' && transport === 'polling') {
+                if (!sid) {
+                    // New connection, create session
+                    const sessionId = Math.random().toString(36).substr(2, 8);
+                    sessions.set(sessionId, {
+                        created: Date.now(),
+                        lastAccess: Date.now()
+                    });
+                    response.body = `96:0{"sid":"${sessionId}","upgrades":["websocket"],"pingInterval":25000,"pingTimeout":20000}2:40`;
+                } else {
+                    // Existing session
+                    const session = sessions.get(sid);
+                    if (session) {
+                        session.lastAccess = Date.now();
+                        response.body = '6:3probe';
+                    } else {
+                        response.statusCode = 400;
+                        response.body = 'Invalid session';
+                    }
+                }
+
+                return response;
+            }
+
+            // Handle WebSocket upgrade
+            if (transport === 'websocket') {
+                return {
+                    statusCode: 400,
+                    headers: {
+                        'Content-Type': 'text/plain'
+                    },
+                    body: 'WebSocket not supported in polling mode'
+                };
+            }
+
+            // Default Socket.IO response
+            return await new Promise((resolve) => {
+                io.engine.handleRequest(
+                    {
+                        method: event.httpMethod,
+                        url: event.path,
+                        headers: event.headers,
+                        query: queryParams,
+                        body: event.body
+                    },
+                    {
+                        setHeader: (key, value) => {
+                            response.headers[key] = value;
+                        },
+                        writeHead: (status, headers) => {
+                            response.statusCode = status;
+                            if (headers) {
+                                response.headers = { ...response.headers, ...headers };
+                            }
+                        },
+                        end: (data) => {
+                            if (data) {
+                                response.body = data;
+                            }
+                            resolve(response);
+                        }
+                    }
+                );
             });
         }
 
