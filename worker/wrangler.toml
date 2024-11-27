@@ -1,0 +1,10 @@
+name = "video-chat-signaling"
+main = "index.js"
+compatibility_date = "2023-01-01"
+
+[triggers]
+crons = []
+
+[[routes]]
+pattern = "your-subdomain.workers.dev"
+custom_domain = true
