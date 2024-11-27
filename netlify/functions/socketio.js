@@ -1,97 +1,123 @@
-const { Server } = require('socket.io');
-const { EventEmitter } = require('events');
-const { Readable } = require('stream');
+const engine = require('engine.io');
+const { Server: SocketServer } = require('socket.io');
+const { parse } = require('querystring');
 
-// In-memory storage for peer connections
+// In-memory storage for connections and peers
 const peers = new Map();
+const connections = new Map();
+let engineServer = null;
 let io = null;
 
-// Create a proper request object with all required properties
-function createRequestObject(event) {
-    const remoteAddress = event.headers['x-forwarded-for'] || 
-                         event.headers['x-real-ip'] || 
-                         event.requestContext?.identity?.sourceIp || 
-                         '0.0.0.0';
-
-    const req = new EventEmitter();
-    
-    // Add required properties
-    req.method = event.httpMethod;
-    req.url = event.path + (event.queryStringParameters ? '?' + new URLSearchParams(event.queryStringParameters).toString() : '');
-    req.headers = {
-        ...event.headers,
-        'content-type': event.headers['content-type'] || 'application/octet-stream',
-        'content-length': event.body ? Buffer.byteLength(event.body) : 0
-    };
-    req.connection = {
-        remoteAddress,
-        encrypted: event.headers['x-forwarded-proto'] === 'https'
-    };
-
-    // Add required methods
-    req.on = (event, handler) => req.addListener(event, handler);
-    req.destroy = () => {};
-    req.setTimeout = () => {};
-    req.setEncoding = () => {};
-
-    // Create readable stream for body
-    if (event.body) {
-        const bodyStream = new Readable({
-            read() {
-                this.push(event.body);
-                this.push(null);
-            }
-        });
-        req.pipe = (destination) => bodyStream.pipe(destination);
+// Handle Socket.IO protocol
+function handleSocketIO(data) {
+    try {
+        const [type, ...rest] = data.toString().split(':');
+        const payload = rest.join(':');
+        
+        switch (type) {
+            case '0': // Connect
+                return `40${payload}`; // Connect ACK
+            case '2': // Ping
+                return '3'; // Pong
+            case '4': // Message
+                return handleMessage(payload);
+            default:
+                return '';
+        }
+    } catch (error) {
+        console.error('Protocol error:', error);
+        return '';
     }
-
-    return req;
 }
 
-// Create a proper response object
-function createResponseObject(resolve) {
-    const response = {
-        statusCode: 200,
-        headers: {
-            'Content-Type': 'application/octet-stream',
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-            'Access-Control-Allow-Headers': '*',
-            'Access-Control-Allow-Credentials': 'true',
-            'Cache-Control': 'no-cache'
-        },
-        body: ''
-    };
+// Handle Socket.IO messages
+function handleMessage(data) {
+    try {
+        if (!data) return '';
+        const [messageType, namespace, payload] = data.split(',');
+        
+        // Handle different message types
+        switch (messageType) {
+            case '0': // Connect
+                return '40'; // Connect ACK
+            case '2': // Event
+                const event = JSON.parse(payload || '{}');
+                handleEvent(event);
+                return '';
+            default:
+                return '';
+        }
+    } catch (error) {
+        console.error('Message error:', error);
+        return '';
+    }
+}
 
-    const res = new EventEmitter();
-    
-    // Add required methods
-    res.setHeader = (key, value) => {
-        response.headers[key] = value;
-    };
-    res.removeHeader = (key) => {
-        delete response.headers[key];
-    };
-    res.getHeader = (key) => response.headers[key];
-    res.writeHead = (status, headers) => {
-        response.statusCode = status;
-        if (headers) {
-            Object.assign(response.headers, headers);
+// Handle Socket.IO events
+function handleEvent(event) {
+    try {
+        const [eventName, ...args] = event;
+        
+        switch (eventName) {
+            case 'find-peer':
+                handleFindPeer(...args);
+                break;
+            case 'signal':
+                handleSignal(...args);
+                break;
+            default:
+                break;
         }
-    };
-    res.write = (data) => {
-        if (data) {
-            response.body += data.toString();
-        }
-    };
-    res.end = (data) => {
-        if (data) {
-            response.body += data.toString();
-        }
-        resolve(response);
-    };
+    } catch (error) {
+        console.error('Event error:', error);
+    }
+}
 
-    return res;
+// Handle find-peer event
+function handleFindPeer(socketId) {
+    try {
+        const availablePeers = Array.from(peers.entries())
+            .filter(([id, peer]) => id !== socketId && !peer.busy);
+        
+        if (availablePeers.length > 0) {
+            const [peerId, _] = availablePeers[0];
+            const roomId = `room_${Date.now()}`;
+            
+            peers.set(socketId, { busy: true, room: roomId });
+            peers.set(peerId, { busy: true, room: roomId });
+            
+            const socket = connections.get(socketId);
+            const peerSocket = connections.get(peerId);
+            
+            if (socket && peerSocket) {
+                socket.send(JSON.stringify(['peer-found', { isInitiator: true }]));
+                peerSocket.send(JSON.stringify(['peer-found', { isInitiator: false }]));
+            }
+        }
+    } catch (error) {
+        console.error('Find peer error:', error);
+    }
+}
+
+// Handle signal event
+function handleSignal(data, socketId) {
+    try {
+        const peer = peers.get(socketId);
+        if (peer?.room) {
+            const roomPeers = Array.from(peers.entries())
+                .filter(([id, p]) => p.room === peer.room && id !== socketId)
+                .map(([id]) => id);
+            
+            roomPeers.forEach(peerId => {
+                const peerSocket = connections.get(peerId);
+                if (peerSocket) {
+                    peerSocket.send(JSON.stringify(['signal', data]));
+                }
+            });
+        }
+    } catch (error) {
+        console.error('Signal error:', error);
+    }
 }
 
 exports.handler = async (event, context) => {
@@ -110,95 +136,96 @@ exports.handler = async (event, context) => {
     }
 
     try {
-        // Initialize Socket.IO if not already initialized
-        if (!io) {
-            io = new Server({
+        // Initialize engine.io server if not already initialized
+        if (!engineServer) {
+            engineServer = engine.attach({
+                pingTimeout: 60000,
+                pingInterval: 25000,
+                transports: ['polling', 'websocket'],
                 cors: {
                     origin: '*',
                     methods: ['GET', 'POST', 'OPTIONS'],
                     credentials: true
-                },
-                transports: ['polling', 'websocket'],
-                path: '/socket.io',
-                serveClient: false,
-                pingTimeout: 60000,
-                pingInterval: 25000,
-                connectTimeout: 45000,
-                maxHttpBufferSize: 1e8,
-                allowEIO3: true
+                }
             });
 
-            // Socket.IO event handlers
-            io.on('connection', (socket) => {
-                console.log('Client connected:', socket.id);
-                peers.set(socket.id, { busy: false });
+            // Handle engine.io connections
+            engineServer.on('connection', socket => {
+                const socketId = socket.id;
+                connections.set(socketId, socket);
+                peers.set(socketId, { busy: false });
 
-                socket.on('find-peer', () => {
-                    const availablePeers = Array.from(peers.entries())
-                        .filter(([id, peer]) => id !== socket.id && !peer.busy);
-                    
-                    if (availablePeers.length > 0) {
-                        const [peerId, _] = availablePeers[0];
-                        const roomId = `room_${Date.now()}`;
-                        
-                        peers.set(socket.id, { busy: true, room: roomId });
-                        peers.set(peerId, { busy: true, room: roomId });
-                        
-                        socket.join(roomId);
-                        io.sockets.sockets.get(peerId)?.join(roomId);
-                        
-                        socket.emit('peer-found', { isInitiator: true });
-                        io.to(peerId).emit('peer-found', { isInitiator: false });
+                console.log('Client connected:', socketId);
+
+                socket.on('message', data => {
+                    const response = handleSocketIO(data);
+                    if (response) {
+                        socket.send(response);
                     }
                 });
 
-                socket.on('signal', (data) => {
-                    const peer = peers.get(socket.id);
+                socket.on('close', () => {
+                    const peer = peers.get(socketId);
                     if (peer?.room) {
-                        socket.to(peer.room).emit('signal', data);
-                    }
-                });
-
-                socket.on('disconnect', () => {
-                    const peer = peers.get(socket.id);
-                    if (peer?.room) {
-                        socket.to(peer.room).emit('peer-disconnected');
                         const roomPeers = Array.from(peers.entries())
                             .filter(([_, p]) => p.room === peer.room)
-                            .map(([id, _]) => id);
+                            .map(([id]) => id);
                         
                         roomPeers.forEach(id => {
+                            const peerSocket = connections.get(id);
+                            if (peerSocket && id !== socketId) {
+                                peerSocket.send(JSON.stringify(['peer-disconnected']));
+                            }
                             peers.delete(id);
                         });
                     }
-                    peers.delete(socket.id);
-                    console.log('Client disconnected:', socket.id);
+                    connections.delete(socketId);
+                    peers.delete(socketId);
+                    console.log('Client disconnected:', socketId);
                 });
             });
         }
 
-        // Handle Socket.IO requests
+        // Handle engine.io requests
         if (event.path.startsWith('/socket.io')) {
             return await new Promise((resolve) => {
-                const req = createRequestObject(event);
-                const res = createResponseObject(resolve);
+                const req = {
+                    method: event.httpMethod,
+                    url: event.path + (event.queryStringParameters ? '?' + new URLSearchParams(event.queryStringParameters).toString() : ''),
+                    headers: {
+                        ...event.headers,
+                        'content-type': event.headers['content-type'] || 'application/octet-stream',
+                        'content-length': event.body ? Buffer.byteLength(event.body) : 0
+                    },
+                    body: event.body || ''
+                };
 
-                try {
-                    io.engine.handleRequest(req, res);
-                } catch (error) {
-                    console.error('Socket.IO error:', error);
-                    resolve({
-                        statusCode: 500,
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Access-Control-Allow-Origin': '*'
-                        },
-                        body: JSON.stringify({
-                            error: 'Socket.IO error',
-                            message: error.message
-                        })
-                    });
-                }
+                const res = {
+                    writeHead: (status, headers) => {
+                        res.statusCode = status;
+                        res.headers = headers;
+                    },
+                    setHeader: (key, value) => {
+                        if (!res.headers) res.headers = {};
+                        res.headers[key] = value;
+                    },
+                    end: (data) => {
+                        resolve({
+                            statusCode: res.statusCode || 200,
+                            headers: {
+                                ...res.headers,
+                                'Access-Control-Allow-Origin': '*',
+                                'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+                                'Access-Control-Allow-Headers': '*',
+                                'Access-Control-Allow-Credentials': 'true',
+                                'Cache-Control': 'no-cache'
+                            },
+                            body: data
+                        });
+                    }
+                };
+
+                engineServer.handleRequest(req, res);
             });
         }
 
