@@ -1,35 +1,13 @@
 const { Server } = require('socket.io');
-const express = require('express');
-const { createServer } = require('http');
-
-// Create express app
-const app = express();
-
-// Create HTTP server
-const httpServer = createServer(app);
 
 // In-memory storage for peer connections
 const peers = new Map();
 let io = null;
 
-// Express middleware for CORS and headers
-app.use((req, res, next) => {
-    res.set({
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-        'Access-Control-Allow-Headers': '*',
-        'Access-Control-Allow-Credentials': 'true',
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
-        'Pragma': 'no-cache',
-        'Expires': '0'
-    });
-    next();
-});
-
 // Initialize Socket.IO if not already initialized
 function initializeSocketIO() {
     if (!io) {
-        io = new Server(httpServer, {
+        io = new Server({
             cors: {
                 origin: '*',
                 methods: ['GET', 'POST', 'OPTIONS'],
@@ -99,37 +77,39 @@ function initializeSocketIO() {
     return io;
 }
 
-// Socket.IO handler function
-function handleSocketRequest(req, res) {
-    return new Promise((resolve, reject) => {
-        try {
-            const io = initializeSocketIO();
-            
-            // Create a fake upgrade event
-            const upgradeEvent = {
-                req: req,
-                socket: {
-                    setTimeout: () => {},
-                    setNoDelay: () => {},
-                    setKeepAlive: () => {}
-                },
-                head: Buffer.alloc(0)
-            };
+// Create a response-like object that Socket.IO expects
+function createResponse(resolve) {
+    let headers = {};
+    let statusCode = 200;
+    let body = '';
 
-            // Handle the Socket.IO request
-            io.engine.handleRequest(req, res);
-            
-            // Handle potential WebSocket upgrade
-            if (req.headers['upgrade'] === 'websocket') {
-                io.engine.handleUpgrade(upgradeEvent);
+    return {
+        writeHead(status, headers_) {
+            statusCode = status;
+            if (headers_) {
+                headers = { ...headers, ...headers_ };
             }
-            
-            resolve();
-        } catch (error) {
-            console.error('Socket.IO error:', error);
-            reject(error);
+            return this;
+        },
+        setHeader(key, value) {
+            headers[key] = value;
+            return this;
+        },
+        write(data) {
+            body += data;
+            return this;
+        },
+        end(data) {
+            if (data) {
+                body += data;
+            }
+            resolve({
+                statusCode,
+                headers,
+                body
+            });
         }
-    });
+    };
 }
 
 exports.handler = async (event, context) => {
@@ -151,37 +131,28 @@ exports.handler = async (event, context) => {
 
     try {
         if (event.httpMethod === 'GET' || event.httpMethod === 'POST') {
+            const io = initializeSocketIO();
+
             // Create request-like object
             const req = {
                 method: event.httpMethod,
                 url: event.path,
-                headers: event.headers,
-                query: event.queryStringParameters || {},
+                headers: event.headers || {},
                 connection: {
                     remoteAddress: event.requestContext?.identity?.sourceIp || '0.0.0.0'
                 }
             };
 
-            // Create response-like object
-            const res = {
-                statusCode: 200,
-                headers: {},
-                body: '',
-                setHeader(name, value) {
-                    this.headers[name] = value;
-                },
-                end(data) {
-                    this.body = data;
-                }
-            };
-
-            // Handle Socket.IO request
-            await handleSocketRequest(req, res);
+            // Handle the Socket.IO request
+            const response = await new Promise((resolve) => {
+                const res = createResponse(resolve);
+                io.engine.handleRequest(req, res);
+            });
 
             return {
-                statusCode: res.statusCode,
+                ...response,
                 headers: {
-                    ...res.headers,
+                    ...response.headers,
                     'Access-Control-Allow-Origin': '*',
                     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
                     'Access-Control-Allow-Headers': '*',
@@ -189,13 +160,16 @@ exports.handler = async (event, context) => {
                     'Cache-Control': 'no-cache, no-store, must-revalidate',
                     'Pragma': 'no-cache',
                     'Expires': '0'
-                },
-                body: res.body || ''
+                }
             };
         }
 
         return {
             statusCode: 405,
+            headers: {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            },
             body: JSON.stringify({ error: 'Method not allowed' })
         };
 
