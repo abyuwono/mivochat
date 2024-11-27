@@ -1,17 +1,23 @@
 [build]
-  command = "npm run build"
+  command = "npm install && npm run build:prod"
   publish = "public"
   functions = "netlify/functions"
 
 [functions]
   directory = "netlify/functions"
   node_bundler = "esbuild"
+  external_node_modules = ["express", "socket.io", "socket.io-client"]
 
 [[redirects]]
-  from = "/.netlify/functions/socketio/*"
-  to = "/.netlify/functions/socketio"
+  from = "/socket.io/*"
+  to = "/.netlify/functions/socketio/:splat"
   status = 200
   force = true
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
 
 [[headers]]
   for = "/*"
@@ -21,6 +27,9 @@
     Access-Control-Allow-Headers = "*"
     Access-Control-Allow-Credentials = "true"
     Cache-Control = "no-cache"
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
 
 [dev]
   framework = "#custom"

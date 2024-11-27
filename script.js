@@ -56,7 +56,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function initializeSocket() {
         const socketURL = 'https://mivocom.netlify.app';
         socket = io(socketURL, {
-            path: '/.netlify/functions/socketio',
+            path: '/socket.io',
             transports: ['polling', 'websocket'],
             reconnectionAttempts: 5,
             reconnectionDelay: 1000,
