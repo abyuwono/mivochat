@@ -53,9 +53,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Initialize Socket.IO connection
     function initializeSocket() {
-        socket = io({
+        const socketURL = window.location.origin;
+        socket = io(socketURL, {
             path: '/.netlify/functions/socketio',
-            transports: ['websocket']
+            transports: ['websocket'],
+            reconnectionAttempts: 5,
+            reconnectionDelay: 1000
+        });
+
+        socket.on('connect', () => {
+            console.log('Connected to server');
+            showSystemMessage('Connected to server');
+        });
+
+        socket.on('connect_error', (error) => {
+            console.error('Connection error:', error);
+            showSystemMessage('Connection error: ' + error.message);
         });
 
         socket.on('room-joined', ({ roomId }) => {
