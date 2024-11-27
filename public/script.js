@@ -332,15 +332,24 @@ document.addEventListener('DOMContentLoaded', () => {
     // Function to get ICE servers configuration
     async function getIceServers() {
         try {
-            const response = await fetch('/api/ice-servers');
-            const config = await response.json();
-            return config;
+            const response = await fetch(`${config.SOCKET_SERVER}/api/ice-servers`);
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            const data = await response.json();
+            return data;
         } catch (error) {
             console.error('Error fetching ICE servers:', error);
-            // Fallback to basic STUN configuration
+            // Fallback to default ICE servers if fetch fails
             return {
                 iceServers: [
-                    { urls: 'stun:stun.l.google.com:19302' }
+                    {
+                        urls: [
+                            'stun:stun.l.google.com:19302',
+                            'stun:stun1.l.google.com:19302',
+                            'stun:stun2.l.google.com:19302'
+                        ]
+                    }
                 ]
             };
         }

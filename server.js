@@ -6,6 +6,8 @@ const { uniqueNamesGenerator, adjectives, colors, animals } = require('unique-na
 require('dotenv').config();
 
 const app = express();
+app.use(express.json());
+
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
     cors: {
@@ -45,10 +47,34 @@ const generateNickname = () => {
     });
 };
 
+// Get ICE servers configuration
+app.get('/api/ice-servers', (req, res) => {
+    const iceServers = {
+        iceServers: [
+            {
+                urls: [
+                    'stun:stun.l.google.com:19302',
+                    'stun:stun1.l.google.com:19302',
+                    'stun:stun2.l.google.com:19302'
+                ]
+            }
+        ]
+    };
+    res.json(iceServers);
+});
+
+// Get active users count
+app.get('/api/users/count', (req, res) => {
+    res.json({ count: peers.size });
+});
+
 // Socket.IO connection handling
 io.on('connection', (socket) => {
     console.log('Client connected:', socket.id);
     peers.set(socket.id, { busy: false });
+
+    // Broadcast updated user count
+    io.emit('user-count-updated', { userCount: peers.size });
 
     // Generate and store nickname for the user
     const nickname = generateNickname();
@@ -116,6 +142,9 @@ io.on('connection', (socket) => {
             }
         }
         peers.delete(socket.id);
+        
+        // Broadcast updated user count
+        io.emit('user-count-updated', { userCount: peers.size });
     });
 });
 
