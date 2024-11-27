@@ -1,6 +1,6 @@
 [build]
-  publish = "public"
   command = "npm run build"
+  publish = "public"
   functions = "netlify/functions"
 
 [functions]
@@ -8,15 +8,10 @@
   node_bundler = "esbuild"
 
 [[redirects]]
-  from = "/socket.io/*"
+  from = "/.netlify/functions/socketio/*"
   to = "/.netlify/functions/socketio"
   status = 200
   force = true
-
-[[redirects]]
-  from = "/*"
-  to = "/index.html"
-  status = 200
 
 [[headers]]
   for = "/*"
@@ -24,6 +19,8 @@
     Access-Control-Allow-Origin = "*"
     Access-Control-Allow-Methods = "GET, POST, OPTIONS"
     Access-Control-Allow-Headers = "*"
+    Access-Control-Allow-Credentials = "true"
+    Cache-Control = "no-cache"
 
 [dev]
   framework = "#custom"

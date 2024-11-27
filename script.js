@@ -24,6 +24,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let myNickname = '';
     let currentRoomId = null;
     let connectedPeers = {};
+    let isConnected = false;
 
     // Update chat header to show connection info
     function updateChatHeader(roomId = null, peerNickname = null) {
@@ -58,22 +59,27 @@ document.addEventListener('DOMContentLoaded', () => {
             path: '/.netlify/functions/socketio',
             transports: ['polling'],
             reconnectionAttempts: 3,
-            reconnectionDelay: 1000,
+            reconnectionDelay: 2000,
             autoConnect: true,
             forceNew: true,
             withCredentials: false,
-            timeout: 10000
+            timeout: 10000,
+            upgrade: false,
+            rememberUpgrade: false
         });
 
         socket.on('connect', () => {
             console.log('Connected to server:', socket.id);
             showSystemMessage('Connected to server');
+            isConnected = true;
         });
 
         socket.on('connect_error', (error) => {
             console.error('Connection error:', error);
             showSystemMessage('Connection error: ' + error.message);
-            socket.connect();
+            if (!isConnected) {
+                setTimeout(() => socket.connect(), 2000);
+            }
         });
 
         socket.on('disconnect', (reason) => {
