@@ -1,120 +1,97 @@
 const { Server } = require('socket.io');
 const express = require('express');
-const serverless = require('serverless-http');
 
+// Create express app
 const app = express();
 
-// Room management
-const rooms = new Map();
-const userToRoom = new Map();
-const users = new Map();
-let waitingUsers = [];
+// In-memory storage for peer connections
+const peers = new Map();
+let io = null;
 
-// Socket.IO setup
-const io = new Server({
-    cors: {
-        origin: '*',
-        methods: ['GET', 'POST', 'OPTIONS'],
-        credentials: true,
-        allowedHeaders: ['*']
-    },
-    transports: ['polling'],
-    allowEIO3: true,
-    pingTimeout: 10000,
-    pingInterval: 5000
-});
-
-// Express middleware
-app.use(express.json());
+// Express middleware for CORS and headers
 app.use((req, res, next) => {
     res.set({
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
         'Access-Control-Allow-Headers': '*',
         'Access-Control-Allow-Credentials': 'true',
-        'Cache-Control': 'no-cache'
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0'
     });
-
-    if (req.method === 'OPTIONS') {
-        res.status(204).send();
-        return;
-    }
-
     next();
 });
 
-// Socket.IO event handlers
-io.on('connection', (socket) => {
-    console.log('New connection:', socket.id);
-    
-    socket.on('disconnect', () => {
-        console.log(`User disconnected: ${socket.id}`);
-        const roomId = userToRoom.get(socket.id);
-        if (roomId) {
-            const room = rooms.get(roomId);
-            if (room) {
-                room.users = room.users.filter(id => id !== socket.id);
-                if (room.users.length === 0) {
-                    rooms.delete(roomId);
-                } else {
-                    socket.to(roomId).emit('peer-disconnected');
+// Initialize Socket.IO if not already initialized
+function initializeSocketIO() {
+    if (!io) {
+        io = new Server({
+            cors: {
+                origin: '*',
+                methods: ['GET', 'POST', 'OPTIONS'],
+                credentials: true
+            },
+            transports: ['polling'],
+            path: '/.netlify/functions/socketio'
+        });
+
+        // Socket.IO event handlers
+        io.on('connection', (socket) => {
+            console.log('Client connected:', socket.id);
+            peers.set(socket.id, { busy: false });
+
+            socket.on('find-peer', () => {
+                const availablePeers = Array.from(peers.entries())
+                    .filter(([id, peer]) => id !== socket.id && !peer.busy);
+                
+                if (availablePeers.length > 0) {
+                    const [peerId, _] = availablePeers[0];
+                    const roomId = `room_${Date.now()}`;
+                    
+                    // Mark both peers as busy
+                    peers.set(socket.id, { busy: true, room: roomId });
+                    peers.set(peerId, { busy: true, room: roomId });
+                    
+                    // Join the room
+                    socket.join(roomId);
+                    io.sockets.sockets.get(peerId)?.join(roomId);
+                    
+                    // Notify peers
+                    socket.emit('peer-found', { isInitiator: true });
+                    io.to(peerId).emit('peer-found', { isInitiator: false });
                 }
-            }
-        }
-        users.delete(socket.id);
-        userToRoom.delete(socket.id);
-        waitingUsers = waitingUsers.filter(id => id !== socket.id);
-    });
+            });
 
-    socket.on('find-peer', () => {
-        if (waitingUsers.length > 0 && waitingUsers[0] !== socket.id) {
-            const peerId = waitingUsers.shift();
-            const roomId = Math.random().toString(36).substring(2, 15);
-            
-            rooms.set(roomId, { users: [socket.id, peerId] });
-            userToRoom.set(socket.id, roomId);
-            userToRoom.set(peerId, roomId);
-            
-            socket.join(roomId);
-            io.sockets.sockets.get(peerId)?.join(roomId);
-            
-            io.to(peerId).emit('peer-found', { isInitiator: true });
-            socket.emit('peer-found', { isInitiator: false });
-        } else if (!waitingUsers.includes(socket.id)) {
-            waitingUsers.push(socket.id);
-        }
-    });
+            socket.on('signal', (data) => {
+                const peer = peers.get(socket.id);
+                if (peer?.room) {
+                    socket.to(peer.room).emit('signal', data);
+                }
+            });
 
-    socket.on('signal', (data) => {
-        const roomId = userToRoom.get(socket.id);
-        if (roomId) {
-            socket.to(roomId).emit('signal', data);
-        }
-    });
-});
-
-// Socket.IO handler
-app.use('/.netlify/functions/socketio', (req, res) => {
-    if (req.method === 'GET') {
-        io.handleRequest(req, res);
-    } else if (req.method === 'POST') {
-        io.handleUpgrade(req, req.socket, Buffer.alloc(0));
-        res.status(200).json({ status: 'ok' });
-    } else {
-        res.status(405).json({ error: 'Method not allowed' });
+            socket.on('disconnect', () => {
+                const peer = peers.get(socket.id);
+                if (peer?.room) {
+                    socket.to(peer.room).emit('peer-disconnected');
+                    // Clean up room
+                    const roomPeers = Array.from(peers.entries())
+                        .filter(([_, p]) => p.room === peer.room)
+                        .map(([id, _]) => id);
+                    
+                    roomPeers.forEach(id => {
+                        peers.delete(id);
+                    });
+                }
+                peers.delete(socket.id);
+                console.log('Client disconnected:', socket.id);
+            });
+        });
     }
-});
+    return io;
+}
 
-// Error handling
-app.use((err, req, res, next) => {
-    console.error('Error:', err);
-    res.status(500).json({ error: 'Internal server error' });
-});
-
-// Export the serverless handler
-const handler = serverless(app);
 exports.handler = async (event, context) => {
-    // Return immediately for preflight requests
+    // Handle preflight requests
     if (event.httpMethod === 'OPTIONS') {
         return {
             statusCode: 204,
@@ -123,23 +100,88 @@ exports.handler = async (event, context) => {
                 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
                 'Access-Control-Allow-Headers': '*',
                 'Access-Control-Allow-Credentials': 'true',
-                'Cache-Control': 'no-cache'
+                'Cache-Control': 'no-cache, no-store, must-revalidate',
+                'Pragma': 'no-cache',
+                'Expires': '0'
             }
         };
     }
 
     try {
-        const result = await handler(event, context);
-        return result;
+        // Initialize Socket.IO
+        const io = initializeSocketIO();
+
+        if (event.httpMethod === 'GET' || event.httpMethod === 'POST') {
+            // Create request-like object
+            const req = {
+                method: event.httpMethod,
+                url: event.path,
+                headers: event.headers,
+                query: event.queryStringParameters || {}
+            };
+
+            // Create response-like object
+            const res = {
+                statusCode: 200,
+                headers: {},
+                body: '',
+                setHeader(name, value) {
+                    this.headers[name] = value;
+                },
+                end(data) {
+                    this.body = data;
+                }
+            };
+
+            // Handle Socket.IO request
+            await new Promise((resolve, reject) => {
+                try {
+                    io.engine.handleRequest(req, res);
+                    resolve();
+                } catch (error) {
+                    console.error('Socket.IO error:', error);
+                    reject(error);
+                }
+            });
+
+            return {
+                statusCode: res.statusCode,
+                headers: {
+                    ...res.headers,
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+                    'Access-Control-Allow-Headers': '*',
+                    'Access-Control-Allow-Credentials': 'true',
+                    'Cache-Control': 'no-cache, no-store, must-revalidate',
+                    'Pragma': 'no-cache',
+                    'Expires': '0'
+                },
+                body: res.body || ''
+            };
+        }
+
+        return {
+            statusCode: 405,
+            body: JSON.stringify({ error: 'Method not allowed' })
+        };
     } catch (error) {
         console.error('Handler error:', error);
         return {
             statusCode: 500,
             headers: {
+                'Content-Type': 'application/json',
                 'Access-Control-Allow-Origin': '*',
-                'Content-Type': 'application/json'
+                'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+                'Access-Control-Allow-Headers': '*',
+                'Cache-Control': 'no-cache, no-store, must-revalidate',
+                'Pragma': 'no-cache',
+                'Expires': '0'
             },
-            body: JSON.stringify({ error: 'Internal server error' })
+            body: JSON.stringify({
+                error: 'Internal server error',
+                message: error.message,
+                stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+            })
         };
     }
 };
