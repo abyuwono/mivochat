@@ -189,15 +189,51 @@ video {
 }
 
 .chat-header {
-    padding: 0.5rem 1rem;
-    border-bottom: 1px solid var(--glass-border);
-    margin-bottom: 1rem;
+    padding: 12px;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 12px 12px 0 0;
 }
 
-.chat-header h3 {
-    color: white;
-    font-size: 1.2rem;
-    font-weight: 500;
+.chat-header-main {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 4px;
+}
+
+.chat-header-info {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 0.85em;
+    opacity: 0.8;
+}
+
+.connection-status {
+    font-size: 0.8em;
+    padding: 4px 8px;
+    border-radius: 12px;
+}
+
+.connection-status.connected {
+    background: rgba(46, 213, 115, 0.2);
+    color: #2ed573;
+}
+
+.connection-status.disconnected {
+    background: rgba(255, 71, 87, 0.2);
+    color: #ff4757;
+}
+
+.room-id {
+    font-family: monospace;
+    background: rgba(255, 255, 255, 0.1);
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+
+.peer-name {
+    color: var(--accent-color);
 }
 
 .messages {

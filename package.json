@@ -1,22 +1,22 @@
 {
-  "name": "video-chat-app",
+  "name": "podchat",
   "version": "1.0.0",
-  "description": "WebRTC-based live streaming platform with Cloudflare Stream",
+  "description": "WebRTC Video Chat Application",
   "main": "server.js",
   "type": "commonjs",
   "scripts": {
     "start": "node server.js",
+    "build": "mkdir -p public && cp -r index.html styles.css script.js public/ && npm install",
     "dev": "nodemon server.js"
   },
   "dependencies": {
-    "dotenv": "^16.3.1",
     "express": "^4.18.2",
-    "node-fetch": "^2.7.0",
     "socket.io": "^4.7.2",
+    "socket.io-client": "^4.7.2",
     "unique-names-generator": "^4.7.1",
-    "uuid": "^9.0.1"
+    "@netlify/functions": "^2.0.0"
   },
   "devDependencies": {
-    "nodemon": "^3.0.2"
+    "nodemon": "^2.0.22"
   }
 }

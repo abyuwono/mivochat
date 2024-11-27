@@ -21,8 +21,8 @@ app.use(express.static(path.join(__dirname, '/')));
 app.use(express.json());
 
 // Cloudflare configuration
-const CLOUDFLARE_ACCOUNT_ID = 'f515e268b7a98324a18a2d5240534c4b';
-const CLOUDFLARE_API_TOKEN = 'Y5tMp-nyKRczoBkD5iwi9dxpb0P6cSRmbiJ1XoSx';
+const CLOUDFLARE_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID;
+const CLOUDFLARE_API_TOKEN = process.env.CLOUDFLARE_API_TOKEN;
 const CLOUDFLARE_API_BASE = `https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/stream`;
 
 // Create a new WebRTC stream
@@ -83,6 +83,26 @@ app.get('/api/stream/:streamId', async (req, res) => {
         console.error('Error getting stream status:', error);
         res.status(500).json({ error: error.message });
     }
+});
+
+// Add endpoint to get ICE server configuration
+app.get('/api/ice-servers', (req, res) => {
+    const iceServers = {
+        iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+            {
+                urls: [
+                    'turn:turn.cloudflare.com:3478',
+                    'turns:turn.cloudflare.com:5349'
+                ],
+                username: process.env.CLOUDFLARE_ACCOUNT_ID,
+                credential: process.env.CLOUDFLARE_API_TOKEN
+            }
+        ],
+        iceCandidatePoolSize: 10
+    };
+    res.json(iceServers);
 });
 
 // Room management
@@ -165,32 +185,36 @@ io.on('connection', (socket) => {
     socket.on('find-peer', () => {
         console.log('User looking for peer:', socket.id);
 
-        if (waitingUsers.length > 0) {
+        if (waitingUsers.length > 0 && waitingUsers[0] !== socket.id) {
             const peer = waitingUsers.shift();
             const roomId = Date.now().toString();
             
-            console.log('Creating room:', roomId, 'for users:', socket.id, peer);
-            
-            // Create new room
+            // Create room
             rooms.set(roomId, {
                 users: [socket.id, peer],
                 messages: []
             });
             
-            // Map users to room
+            // Store room mapping for both users
             userToRoom.set(socket.id, roomId);
             userToRoom.set(peer, roomId);
             
-            // Join socket room
+            // Join both users to the room
             socket.join(roomId);
             io.sockets.sockets.get(peer)?.join(roomId);
             
-            // Notify both peers
-            io.to(roomId).emit('room-joined', { roomId });
-            io.to(peer).emit('peer-found', { initiator: false });
-            socket.emit('peer-found', { initiator: true });
+            console.log(`Creating room: ${roomId} for users: ${socket.id} ${peer}`);
+            
+            // Notify both users about the connection with room ID and peer info
+            io.to(roomId).emit('peer-connected', {
+                roomId,
+                users: {
+                    [socket.id]: users.get(socket.id)?.nickname,
+                    [peer]: users.get(peer)?.nickname
+                }
+            });
         } else {
-            console.log('No peers available, adding to waiting queue:', socket.id);
+            console.log(`No peers available, adding to waiting queue: ${socket.id}`);
             waitingUsers.push(socket.id);
         }
     });
