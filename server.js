@@ -6,34 +6,41 @@ const { uniqueNamesGenerator, adjectives, colors, animals } = require('unique-na
 require('dotenv').config();
 
 const app = express();
+
+// Define allowed origins
+const allowedOrigins = [
+    'http://localhost:3000',
+    'https://mivocom.netlify.app',
+    'https://mivochat-production.up.railway.app'
+];
+
+// Configure CORS middleware
+app.use(cors({
+    origin: function(origin, callback) {
+        // Allow requests with no origin (like mobile apps or curl requests)
+        if (!origin) return callback(null, true);
+        if (allowedOrigins.indexOf(origin) === -1) {
+            const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
+            return callback(new Error(msg), false);
+        }
+        return callback(null, true);
+    },
+    methods: ['GET', 'POST'],
+    credentials: true,
+    optionsSuccessStatus: 204
+}));
+
 app.use(express.json());
 
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
     cors: {
-        origin: [
-            "http://localhost:3000",
-            "https://mivocom.netlify.app",
-            "https://mivochat-production.up.railway.app"
-        ],
-        methods: ["GET", "POST"],
-        credentials: true,
-        allowedHeaders: ["*"]
+        origin: allowedOrigins,
+        methods: ['GET', 'POST'],
+        credentials: true
     },
     transports: ['websocket', 'polling']
 });
-
-// Enable CORS for Express routes
-app.use(cors({
-    origin: [
-        "http://localhost:3000",
-        "https://mivocom.netlify.app",
-        "https://mivochat-production.up.railway.app"
-    ],
-    methods: ["GET", "POST"],
-    credentials: true,
-    allowedHeaders: ["*"]
-}));
 
 // Store connected peers
 const peers = new Map();
@@ -47,9 +54,12 @@ const generateNickname = () => {
     });
 };
 
+// API Routes
+const apiRouter = express.Router();
+
 // Get ICE servers configuration
-app.get('/api/ice-servers', (req, res) => {
-    const iceServers = {
+apiRouter.get('/ice-servers', (req, res) => {
+    res.json({
         iceServers: [
             {
                 urls: [
@@ -59,13 +69,24 @@ app.get('/api/ice-servers', (req, res) => {
                 ]
             }
         ]
-    };
-    res.json(iceServers);
+    });
 });
 
 // Get active users count
-app.get('/api/users/count', (req, res) => {
+apiRouter.get('/users/count', (req, res) => {
     res.json({ count: peers.size });
+});
+
+// Mount API routes
+app.use('/api', apiRouter);
+
+// Basic health check endpoint
+app.get('/', (req, res) => {
+    res.json({ 
+        status: 'ok',
+        connections: peers.size,
+        uptime: process.uptime()
+    });
 });
 
 // Socket.IO connection handling
@@ -148,16 +169,7 @@ io.on('connection', (socket) => {
     });
 });
 
-// Basic health check endpoint
-app.get('/', (req, res) => {
-    res.json({ 
-        status: 'ok',
-        connections: peers.size,
-        uptime: process.uptime()
-    });
-});
-
 const PORT = process.env.PORT || 3000;
 httpServer.listen(PORT, () => {
-    console.log(`Socket.IO server running on port ${PORT}`);
+    console.log(`Server running on port ${PORT}`);
 });
