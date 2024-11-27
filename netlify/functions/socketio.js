@@ -1,9 +1,98 @@
 const { Server } = require('socket.io');
-const { createServer } = require('http');
+const { EventEmitter } = require('events');
+const { Readable } = require('stream');
 
 // In-memory storage for peer connections
 const peers = new Map();
 let io = null;
+
+// Create a proper request object with all required properties
+function createRequestObject(event) {
+    const remoteAddress = event.headers['x-forwarded-for'] || 
+                         event.headers['x-real-ip'] || 
+                         event.requestContext?.identity?.sourceIp || 
+                         '0.0.0.0';
+
+    const req = new EventEmitter();
+    
+    // Add required properties
+    req.method = event.httpMethod;
+    req.url = event.path + (event.queryStringParameters ? '?' + new URLSearchParams(event.queryStringParameters).toString() : '');
+    req.headers = {
+        ...event.headers,
+        'content-type': event.headers['content-type'] || 'application/octet-stream',
+        'content-length': event.body ? Buffer.byteLength(event.body) : 0
+    };
+    req.connection = {
+        remoteAddress,
+        encrypted: event.headers['x-forwarded-proto'] === 'https'
+    };
+
+    // Add required methods
+    req.on = (event, handler) => req.addListener(event, handler);
+    req.destroy = () => {};
+    req.setTimeout = () => {};
+    req.setEncoding = () => {};
+
+    // Create readable stream for body
+    if (event.body) {
+        const bodyStream = new Readable({
+            read() {
+                this.push(event.body);
+                this.push(null);
+            }
+        });
+        req.pipe = (destination) => bodyStream.pipe(destination);
+    }
+
+    return req;
+}
+
+// Create a proper response object
+function createResponseObject(resolve) {
+    const response = {
+        statusCode: 200,
+        headers: {
+            'Content-Type': 'application/octet-stream',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+            'Access-Control-Allow-Headers': '*',
+            'Access-Control-Allow-Credentials': 'true',
+            'Cache-Control': 'no-cache'
+        },
+        body: ''
+    };
+
+    const res = new EventEmitter();
+    
+    // Add required methods
+    res.setHeader = (key, value) => {
+        response.headers[key] = value;
+    };
+    res.removeHeader = (key) => {
+        delete response.headers[key];
+    };
+    res.getHeader = (key) => response.headers[key];
+    res.writeHead = (status, headers) => {
+        response.statusCode = status;
+        if (headers) {
+            Object.assign(response.headers, headers);
+        }
+    };
+    res.write = (data) => {
+        if (data) {
+            response.body += data.toString();
+        }
+    };
+    res.end = (data) => {
+        if (data) {
+            response.body += data.toString();
+        }
+        resolve(response);
+    };
+
+    return res;
+}
 
 exports.handler = async (event, context) => {
     // Handle preflight requests
@@ -23,8 +112,7 @@ exports.handler = async (event, context) => {
     try {
         // Initialize Socket.IO if not already initialized
         if (!io) {
-            const httpServer = createServer();
-            io = new Server(httpServer, {
+            io = new Server({
                 cors: {
                     origin: '*',
                     methods: ['GET', 'POST', 'OPTIONS'],
@@ -91,46 +179,26 @@ exports.handler = async (event, context) => {
 
         // Handle Socket.IO requests
         if (event.path.startsWith('/socket.io')) {
-            const response = {
-                statusCode: 200,
-                headers: {
-                    'Content-Type': 'application/octet-stream',
-                    'Access-Control-Allow-Origin': '*',
-                    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-                    'Access-Control-Allow-Headers': '*',
-                    'Access-Control-Allow-Credentials': 'true',
-                    'Cache-Control': 'no-cache'
-                }
-            };
-
             return await new Promise((resolve) => {
-                const req = {
-                    method: event.httpMethod,
-                    url: event.path + (event.queryStringParameters ? '?' + new URLSearchParams(event.queryStringParameters).toString() : ''),
-                    headers: event.headers,
-                    body: event.body,
-                    query: event.queryStringParameters || {}
-                };
+                const req = createRequestObject(event);
+                const res = createResponseObject(resolve);
 
-                const res = {
-                    setHeader: (key, value) => {
-                        response.headers[key] = value;
-                    },
-                    writeHead: (status, headers) => {
-                        response.statusCode = status;
-                        if (headers) {
-                            response.headers = { ...response.headers, ...headers };
-                        }
-                    },
-                    end: (data) => {
-                        if (data) {
-                            response.body = data;
-                        }
-                        resolve(response);
-                    }
-                };
-
-                io.engine.handleRequest(req, res);
+                try {
+                    io.engine.handleRequest(req, res);
+                } catch (error) {
+                    console.error('Socket.IO error:', error);
+                    resolve({
+                        statusCode: 500,
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Access-Control-Allow-Origin': '*'
+                        },
+                        body: JSON.stringify({
+                            error: 'Socket.IO error',
+                            message: error.message
+                        })
+                    });
+                }
             });
         }
 
@@ -156,8 +224,7 @@ exports.handler = async (event, context) => {
             },
             body: JSON.stringify({
                 error: 'Internal server error',
-                message: error.message,
-                stack: error.stack
+                message: error.message
             })
         };
     }
