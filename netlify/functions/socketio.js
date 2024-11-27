@@ -1,4 +1,9 @@
 const { Server } = require('socket.io');
+const { createServer } = require('http');
+const { parse } = require('url');
+
+// Create a minimal HTTP server
+const httpServer = createServer();
 
 // In-memory storage for peer connections
 const peers = new Map();
@@ -7,7 +12,7 @@ let io = null;
 // Initialize Socket.IO if not already initialized
 function initializeSocketIO() {
     if (!io) {
-        io = new Server({
+        io = new Server(httpServer, {
             cors: {
                 origin: '*',
                 methods: ['GET', 'POST', 'OPTIONS'],
@@ -77,38 +82,71 @@ function initializeSocketIO() {
     return io;
 }
 
-// Create a response-like object that Socket.IO expects
-function createResponse(resolve) {
-    let headers = {};
-    let statusCode = 200;
-    let body = '';
+// Handle Socket.IO request
+async function handleSocketIORequest(event) {
+    const io = initializeSocketIO();
+    
+    // Parse URL
+    const parsedUrl = parse(event.path || '/', true);
+    
+    // Create request object
+    const req = {
+        method: event.httpMethod,
+        url: parsedUrl.path,
+        headers: event.headers || {},
+        query: parsedUrl.query,
+        connection: {
+            remoteAddress: event.requestContext?.identity?.sourceIp || '0.0.0.0'
+        }
+    };
 
-    return {
-        writeHead(status, headers_) {
+    // Create response object
+    let statusCode = 200;
+    let responseHeaders = {};
+    let responseBody = '';
+
+    const res = {
+        writeHead(status, headers) {
             statusCode = status;
-            if (headers_) {
-                headers = { ...headers, ...headers_ };
+            if (headers) {
+                responseHeaders = { ...responseHeaders, ...headers };
             }
             return this;
         },
         setHeader(key, value) {
-            headers[key] = value;
+            responseHeaders[key] = value;
             return this;
         },
         write(data) {
-            body += data;
+            responseBody += data;
             return this;
         },
         end(data) {
             if (data) {
-                body += data;
+                responseBody += data;
             }
-            resolve({
-                statusCode,
-                headers,
-                body
-            });
         }
+    };
+
+    // Handle the request
+    await new Promise((resolve) => {
+        io.engine.handleRequest(req, res);
+        resolve();
+    });
+
+    return {
+        statusCode,
+        headers: {
+            ...responseHeaders,
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+            'Access-Control-Allow-Headers': '*',
+            'Access-Control-Allow-Credentials': 'true',
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0'
+        },
+        body: responseBody
     };
 }
 
@@ -131,37 +169,7 @@ exports.handler = async (event, context) => {
 
     try {
         if (event.httpMethod === 'GET' || event.httpMethod === 'POST') {
-            const io = initializeSocketIO();
-
-            // Create request-like object
-            const req = {
-                method: event.httpMethod,
-                url: event.path,
-                headers: event.headers || {},
-                connection: {
-                    remoteAddress: event.requestContext?.identity?.sourceIp || '0.0.0.0'
-                }
-            };
-
-            // Handle the Socket.IO request
-            const response = await new Promise((resolve) => {
-                const res = createResponse(resolve);
-                io.engine.handleRequest(req, res);
-            });
-
-            return {
-                ...response,
-                headers: {
-                    ...response.headers,
-                    'Access-Control-Allow-Origin': '*',
-                    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-                    'Access-Control-Allow-Headers': '*',
-                    'Access-Control-Allow-Credentials': 'true',
-                    'Cache-Control': 'no-cache, no-store, must-revalidate',
-                    'Pragma': 'no-cache',
-                    'Expires': '0'
-                }
-            };
+            return await handleSocketIORequest(event);
         }
 
         return {
