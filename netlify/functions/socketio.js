@@ -18,13 +18,14 @@ function initializeSocketIO() {
                 methods: ['GET', 'POST', 'OPTIONS'],
                 credentials: true
             },
-            transports: ['polling'],
-            path: '/.netlify/functions/socketio',
+            transports: ['polling', 'websocket'],
+            path: '/',
             serveClient: false,
             pingTimeout: 10000,
             pingInterval: 5000,
             connectTimeout: 45000,
-            allowEIO3: true
+            allowEIO3: true,
+            addTrailingSlash: false
         });
 
         // Socket.IO event handlers
@@ -86,15 +87,18 @@ function initializeSocketIO() {
 async function handleSocketIORequest(event) {
     const io = initializeSocketIO();
     
-    // Parse URL
-    const parsedUrl = parse(event.path || '/', true);
+    // Parse URL and remove the function path prefix
+    const path = event.path || '/';
+    const cleanPath = path.replace('/.netlify/functions/socketio', '');
+    const parsedUrl = parse(cleanPath, true);
     
     // Create request object
     const req = {
         method: event.httpMethod,
-        url: parsedUrl.path,
+        url: cleanPath + (cleanPath.includes('?') ? '' : '?' + new URLSearchParams(event.queryStringParameters || {}).toString()),
         headers: event.headers || {},
-        query: parsedUrl.query,
+        query: parsedUrl.query || event.queryStringParameters || {},
+        body: event.body,
         connection: {
             remoteAddress: event.requestContext?.identity?.sourceIp || '0.0.0.0'
         }
@@ -125,29 +129,44 @@ async function handleSocketIORequest(event) {
             if (data) {
                 responseBody += data;
             }
+        },
+        getHeader(key) {
+            return responseHeaders[key];
         }
     };
 
-    // Handle the request
-    await new Promise((resolve) => {
-        io.engine.handleRequest(req, res);
-        resolve();
-    });
+    try {
+        // Handle the request
+        await new Promise((resolve, reject) => {
+            io.engine.handleRequest(req, res);
+            // Give some time for the engine to process
+            setTimeout(resolve, 100);
+        });
 
-    return {
-        statusCode,
-        headers: {
-            ...responseHeaders,
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-            'Access-Control-Allow-Headers': '*',
-            'Access-Control-Allow-Credentials': 'true',
-            'Cache-Control': 'no-cache, no-store, must-revalidate',
-            'Pragma': 'no-cache',
-            'Expires': '0'
-        },
-        body: responseBody
-    };
+        return {
+            statusCode,
+            headers: {
+                ...responseHeaders,
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+                'Access-Control-Allow-Headers': '*',
+                'Access-Control-Allow-Credentials': 'true',
+                'Cache-Control': 'no-cache, no-store, must-revalidate',
+                'Content-Type': responseHeaders['Content-Type'] || 'application/octet-stream'
+            },
+            body: responseBody
+        };
+    } catch (error) {
+        console.error('Socket.IO request handling error:', error);
+        return {
+            statusCode: 500,
+            headers: {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            },
+            body: JSON.stringify({ error: 'Socket.IO request handling error', details: error.message })
+        };
+    }
 }
 
 exports.handler = async (event, context) => {
