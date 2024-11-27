@@ -4,6 +4,8 @@ const { Server } = require('socket.io');
 const path = require('path');
 const fetch = require('node-fetch');
 require('dotenv').config();
+const { v4: uuidv4 } = require('uuid');
+const { uniqueNamesGenerator, adjectives, colors, animals } = require('unique-names-generator');
 
 const app = express();
 const server = http.createServer(app);
@@ -86,12 +88,78 @@ app.get('/api/stream/:streamId', async (req, res) => {
 // Room management
 const rooms = new Map(); // roomId -> { users: [socketId], messages: [] }
 const userToRoom = new Map(); // socketId -> roomId
+const publicRooms = new Map(); // roomId -> { name: string, users: [socketId], messages: [] }
+const users = new Map(); // socketId -> { nickname }
+
+// Customize the name generator config for shorter names
+const nameConfig = {
+    dictionaries: [colors, animals],
+    separator: '',
+    length: 2,
+    style: 'capital'
+};
+
+// Generate nickname for a user
+function generateNickname() {
+    return uniqueNamesGenerator(nameConfig);
+}
+
+// Create default public room
+const DEFAULT_ROOM = 'public-chat';
+publicRooms.set(DEFAULT_ROOM, {
+    name: 'Public Chat Room',
+    users: [],
+    messages: [],
+    maxUsers: 50 // Maximum users in public room
+});
 
 // Queue for waiting users
 let waitingUsers = [];
 
 io.on('connection', (socket) => {
-    console.log('User connected:', socket.id);
+    // Generate and store nickname for the user
+    const nickname = generateNickname();
+    users.set(socket.id, { nickname });
+    
+    console.log(`User connected: ${socket.id} (${nickname})`);
+
+    // Join public room
+    socket.on('join-public-room', () => {
+        const publicRoom = publicRooms.get(DEFAULT_ROOM);
+        if (publicRoom) {
+            // Leave any existing room
+            const currentRoom = userToRoom.get(socket.id);
+            if (currentRoom) {
+                socket.leave(currentRoom);
+                const room = rooms.get(currentRoom);
+                if (room) {
+                    room.users = room.users.filter(id => id !== socket.id);
+                    if (room.users.length === 0) {
+                        rooms.delete(currentRoom);
+                    }
+                }
+            }
+
+            // Join public room
+            socket.join(DEFAULT_ROOM);
+            publicRoom.users.push(socket.id);
+            userToRoom.set(socket.id, DEFAULT_ROOM);
+
+            // Send room info and recent messages
+            socket.emit('public-room-joined', {
+                roomId: DEFAULT_ROOM,
+                name: publicRoom.name,
+                userCount: publicRoom.users.length,
+                recentMessages: publicRoom.messages.slice(-50), // Send last 50 messages
+                nickname: users.get(socket.id).nickname
+            });
+
+            // Notify all users in public room
+            io.to(DEFAULT_ROOM).emit('user-count-updated', {
+                userCount: publicRoom.users.length
+            });
+        }
+    });
 
     // Handle find peer request
     socket.on('find-peer', () => {
@@ -142,28 +210,16 @@ io.on('connection', (socket) => {
         io.to(peer).emit('signal', data);
     });
 
-    // Handle chat messages
-    socket.on('message', (message) => {
-        const roomId = userToRoom.get(socket.id);
-        if (!roomId) return;
-
-        const room = rooms.get(roomId);
-        if (!room) return;
-
-        console.log('Message in room', roomId, ':', message);
-        
-        // Store message
-        room.messages.push({
-            sender: socket.id,
-            text: message,
-            timestamp: Date.now()
-        });
-
-        // Broadcast to room
-        io.to(roomId).emit('message', {
-            sender: socket.id,
-            text: message
-        });
+    // Handle chat message
+    socket.on('send-message', (message) => {
+        const room = [...socket.rooms].find(room => room !== socket.id);
+        if (room) {
+            // Only emit to the peer, not back to sender
+            socket.to(room).emit('receive-message', {
+                message,
+                nickname: users.get(socket.id)?.nickname || 'Anonymous'
+            });
+        }
     });
 
     // Handle disconnection
@@ -179,20 +235,30 @@ io.on('connection', (socket) => {
         // Handle room cleanup
         const roomId = userToRoom.get(socket.id);
         if (roomId) {
-            const room = rooms.get(roomId);
-            if (room) {
-                // Notify other user in room
-                const peer = room.users.find(id => id !== socket.id);
-                if (peer) {
-                    io.to(peer).emit('peer-disconnected');
-                    userToRoom.delete(peer);
+            if (roomId === DEFAULT_ROOM) {
+                // Handle public room disconnect
+                const publicRoom = publicRooms.get(DEFAULT_ROOM);
+                if (publicRoom) {
+                    publicRoom.users = publicRoom.users.filter(id => id !== socket.id);
+                    io.to(DEFAULT_ROOM).emit('user-count-updated', {
+                        userCount: publicRoom.users.length
+                    });
                 }
-                
-                // Clean up room
-                rooms.delete(roomId);
+            } else {
+                // Handle private room disconnect
+                const room = rooms.get(roomId);
+                if (room) {
+                    const peer = room.users.find(id => id !== socket.id);
+                    if (peer) {
+                        io.to(peer).emit('peer-disconnected');
+                        userToRoom.delete(peer);
+                    }
+                    rooms.delete(roomId);
+                }
             }
             userToRoom.delete(socket.id);
         }
+        users.delete(socket.id);
     };
 
     socket.on('disconnect', handleDisconnect);

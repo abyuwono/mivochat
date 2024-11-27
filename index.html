@@ -2,7 +2,10 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>PodChat - Random Video Podcasting</title>
     <link rel="stylesheet" href="styles.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
@@ -16,6 +19,7 @@
                 <span>PodChat</span>
             </div>
             <div class="nav-links">
+                <span id="userCount" class="user-count">0 users online</span>
                 <button id="startChat" class="nav-button">Start New Chat</button>
                 <button id="nextChat" class="nav-button" disabled>Next Person</button>
             </div>
@@ -24,36 +28,42 @@
 
     <main class="chat-container">
         <div class="video-grid">
-            <div class="video-wrapper">
+            <div class="video-wrapper local-video-wrapper">
                 <video id="localVideo" autoplay muted playsinline></video>
                 <div class="video-overlay">You</div>
             </div>
-            <div class="video-wrapper">
+            <div class="video-wrapper remote-video-wrapper">
                 <video id="remoteVideo" autoplay playsinline></video>
                 <div class="video-overlay">Stranger</div>
             </div>
         </div>
         
         <div class="controls-container glass">
-            <button id="muteAudio" class="control-btn">
+            <button id="muteAudio" class="control-btn" aria-label="Toggle Microphone">
                 <i class="fas fa-microphone"></i>
             </button>
-            <button id="muteVideo" class="control-btn">
+            <button id="muteVideo" class="control-btn" aria-label="Toggle Camera">
                 <i class="fas fa-video"></i>
             </button>
-            <button id="shareScreen" class="control-btn">
+            <button id="switchCamera" class="control-btn" aria-label="Switch Camera" style="display: none;">
+                <i class="fas fa-sync"></i>
+            </button>
+            <button id="shareScreen" class="control-btn" aria-label="Share Screen">
                 <i class="fas fa-desktop"></i>
             </button>
-            <button id="endCall" class="control-btn danger">
+            <button id="endCall" class="control-btn danger" aria-label="End Call">
                 <i class="fas fa-phone-slash"></i>
             </button>
         </div>
 
         <div class="chat-box glass">
+            <div class="chat-header">
+                <h3>Chat Room</h3>
+            </div>
             <div id="messages" class="messages"></div>
             <div class="message-input">
-                <input type="text" id="messageInput" placeholder="Type a message...">
-                <button id="sendMessage">
+                <input type="text" id="messageInput" placeholder="Type a message..." autocomplete="off">
+                <button id="sendMessage" aria-label="Send Message">
                     <i class="fas fa-paper-plane"></i>
                 </button>
             </div>

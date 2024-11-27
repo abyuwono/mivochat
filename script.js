@@ -12,6 +12,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const chatMessages = document.getElementById('messages');
     const endCallButton = document.getElementById('endCall');
     const waitingScreen = document.getElementById('waiting-screen');
+    const userCount = document.getElementById('userCount');
 
     // WebRTC Configuration
     const configuration = {
@@ -30,6 +31,8 @@ document.addEventListener('DOMContentLoaded', () => {
     let peerConnection;
     let currentRoom;
     let isInitiator = false;
+    let isInPublicRoom = false;
+    let myNickname = '';
 
     // Initialize Socket.IO connection
     function initializeSocket() {
@@ -37,7 +40,26 @@ document.addEventListener('DOMContentLoaded', () => {
 
         socket.on('room-joined', ({ roomId }) => {
             currentRoom = roomId;
-            showSystemMessage('Connected to chat room');
+            isInPublicRoom = false;
+            showSystemMessage('Connected to private chat room');
+        });
+
+        socket.on('public-room-joined', ({ roomId, name, userCount, recentMessages, nickname }) => {
+            currentRoom = roomId;
+            isInPublicRoom = true;
+            myNickname = nickname;
+            showSystemMessage(`Connected to ${name} as ${nickname}`);
+            updateUserCount(userCount);
+            
+            // Display recent messages
+            chatMessages.innerHTML = ''; // Clear existing messages
+            recentMessages.forEach(msg => {
+                addMessageToChat(msg.text, msg.nickname, msg.sender === socket.id);
+            });
+        });
+
+        socket.on('user-count-updated', ({ userCount: count }) => {
+            updateUserCount(count);
         });
 
         socket.on('peer-found', ({ initiator }) => {
@@ -50,21 +72,177 @@ document.addEventListener('DOMContentLoaded', () => {
 
         socket.on('peer-disconnected', handlePeerDisconnected);
 
-        socket.on('message', ({ sender, text }) => {
-            displayMessage(text, sender === socket.id);
+        socket.on('message', ({ sender, text, timestamp, nickname }) => {
+            addMessageToChat(text, nickname, sender === socket.id);
         });
+
+        socket.on('public-message', ({ sender, text, timestamp, nickname }) => {
+            addMessageToChat(text, nickname, sender === socket.id);
+        });
+
+        socket.on('nickname', (nickname) => {
+            myNickname = nickname;
+            // Update the local video overlay to show nickname
+            const localOverlay = document.querySelector('.local-video-wrapper .video-overlay');
+            if (localOverlay) {
+                localOverlay.textContent = `You (${nickname})`;
+            }
+        });
+
+        // Join public room by default
+        socket.emit('join-public-room');
     }
 
-    // Initialize media stream
-    async function initializeStream(constraints = { video: true, audio: true }) {
+    // Update the getUserMedia function to handle different browser implementations
+    async function getLocalStream() {
+        const constraints = {
+            audio: true,
+            video: {
+                width: { ideal: 1280 },
+                height: { ideal: 720 },
+                facingMode: 'user'
+            }
+        };
+
         try {
-            localStream = await navigator.mediaDevices.getUserMedia(constraints);
-            localVideo.srcObject = localStream;
-            return true;
+            // Try the standard modern way
+            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                localStream = await navigator.mediaDevices.getUserMedia(constraints);
+            } 
+            // Fallback for older browsers
+            else if (navigator.getUserMedia) {
+                localStream = await new Promise((resolve, reject) => {
+                    navigator.getUserMedia(constraints, resolve, reject);
+                });
+            }
+            // Fallback for webkit browsers
+            else if (navigator.webkitGetUserMedia) {
+                localStream = await new Promise((resolve, reject) => {
+                    navigator.webkitGetUserMedia(constraints, resolve, reject);
+                });
+            }
+            // Fallback for mozilla browsers
+            else if (navigator.mozGetUserMedia) {
+                localStream = await new Promise((resolve, reject) => {
+                    navigator.mozGetUserMedia(constraints, resolve, reject);
+                });
+            } else {
+                throw new Error('getUserMedia is not supported in this browser');
+            }
+
+            if (localVideo) {
+                localVideo.srcObject = localStream;
+                await localVideo.play().catch(error => console.log('Autoplay prevented:', error));
+            }
+
+            // Enable the start chat button once we have local stream
+            document.getElementById('startChat').disabled = false;
+            
+            // Check if we're on mobile and show camera switch button if supported
+            if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const videoDevices = devices.filter(device => device.kind === 'videoinput');
+                if (videoDevices.length > 1) {
+                    const switchCameraButton = document.getElementById('switchCamera');
+                    if (switchCameraButton) {
+                        switchCameraButton.style.display = 'block';
+                    }
+                }
+            }
+
         } catch (error) {
             console.error('Error accessing media devices:', error);
-            showSystemMessage('Error accessing camera/microphone');
-            return false;
+            alert('Error accessing camera/microphone: ' + error.message + '\nPlease ensure you have granted camera permissions and try again.');
+        }
+    }
+
+    // Add camera switching functionality
+    async function switchCamera() {
+        if (!localStream) return;
+
+        const currentTrack = localStream.getVideoTracks()[0];
+        const currentFacingMode = currentTrack.getSettings().facingMode;
+        const newFacingMode = currentFacingMode === 'environment' ? 'user' : 'environment';
+
+        const constraints = {
+            video: {
+                width: { ideal: 1280 },
+                height: { ideal: 720 },
+                facingMode: newFacingMode
+            }
+        };
+
+        try {
+            const newStream = await navigator.mediaDevices.getUserMedia(constraints);
+            const newTrack = newStream.getVideoTracks()[0];
+            
+            // Replace the track in the local stream
+            const sender = peerConnection?.getSenders().find(s => s.track?.kind === 'video');
+            if (sender) {
+                await sender.replaceTrack(newTrack);
+            }
+
+            // Replace the track in local video
+            const tracks = localStream.getVideoTracks();
+            tracks.forEach(track => track.stop());
+            localStream.removeTrack(tracks[0]);
+            localStream.addTrack(newTrack);
+            
+            if (localVideo) {
+                localVideo.srcObject = localStream;
+            }
+        } catch (error) {
+            console.error('Error switching camera:', error);
+            alert('Failed to switch camera: ' + error.message);
+        }
+    }
+
+    // Add event listener for camera switch button
+    document.getElementById('switchCamera')?.addEventListener('click', switchCamera);
+
+    // Handle orientation changes on mobile
+    function handleOrientationChange() {
+        if (localStream) {
+            const videoTrack = localStream.getVideoTracks()[0];
+            if (videoTrack) {
+                // Get updated constraints based on new orientation
+                const constraints = {
+                    width: { ideal: window.innerWidth },
+                    height: { ideal: window.innerHeight },
+                    aspectRatio: { ideal: window.innerWidth / window.innerHeight }
+                };
+                videoTrack.applyConstraints(constraints).catch(console.error);
+            }
+        }
+    }
+
+    // Check for mobile device
+    function isMobileDevice() {
+        return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    }
+
+    // Initialize with device check
+    async function initialize() {
+        if (isMobileDevice()) {
+            // Add mobile-specific meta viewport tag if not present
+            if (!document.querySelector('meta[name="viewport"]')) {
+                const metaViewport = document.createElement('meta');
+                metaViewport.name = 'viewport';
+                metaViewport.content = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no';
+                document.head.appendChild(metaViewport);
+            }
+        }
+        await getLocalStream();
+        initializeSocket();
+    }
+
+    // Start initialization
+    initialize();
+
+    // Update user count display
+    function updateUserCount(count) {
+        if (userCount) {
+            userCount.textContent = `${count} users online`;
         }
     }
 
@@ -141,13 +319,36 @@ document.addEventListener('DOMContentLoaded', () => {
         waitingScreen.classList.add('hidden');
     }
 
-    // Display chat message
-    function displayMessage(message, isOwnMessage) {
-        const messageDiv = document.createElement('div');
-        messageDiv.className = `message ${isOwnMessage ? 'own-message' : 'peer-message'}`;
-        messageDiv.textContent = message;
-        chatMessages.appendChild(messageDiv);
+    // Format timestamp
+    function formatTimestamp(timestamp) {
+        const date = new Date(timestamp);
+        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+
+    // Function to add message to chat
+    function addMessageToChat(message, sender, isMe) {
+        const messageElement = document.createElement('div');
+        messageElement.className = `message ${isMe ? 'sent' : 'received'}`;
+        
+        const senderName = isMe ? `You (${myNickname})` : sender;
+        
+        messageElement.innerHTML = `
+            <div class="message-sender">${senderName}</div>
+            <div class="message-text">${escapeHtml(message)}</div>
+        `;
+        
+        chatMessages.appendChild(messageElement);
         chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    // Helper function to escape HTML to prevent XSS
+    function escapeHtml(unsafe) {
+        return unsafe
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
     }
 
     // Show system message
@@ -159,16 +360,13 @@ document.addEventListener('DOMContentLoaded', () => {
         chatMessages.scrollTop = chatMessages.scrollHeight;
     }
 
-    // Event Listeners
+    // Update start button click handler
     startButton.addEventListener('click', async () => {
-        if (await initializeStream()) {
-            initializeSocket();
-            socket.emit('find-peer');
-            startButton.disabled = true;
-            nextButton.disabled = false;
-            waitingScreen.classList.remove('hidden');
-            showSystemMessage('Looking for a peer...');
-        }
+        socket.emit('find-peer');
+        startButton.disabled = true;
+        nextButton.disabled = false;
+        waitingScreen.classList.remove('hidden');
+        showSystemMessage('Looking for a peer...');
     });
 
     nextButton.addEventListener('click', () => {
@@ -184,7 +382,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     muteAudioButton.addEventListener('click', () => {
-        const audioTrack = localStream.getAudioTracks()[0];
+        const audioTrack = localStream?.getAudioTracks()[0];
         if (audioTrack) {
             audioTrack.enabled = !audioTrack.enabled;
             muteAudioButton.innerHTML = audioTrack.enabled ? 
@@ -194,7 +392,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     muteVideoButton.addEventListener('click', () => {
-        const videoTrack = localStream.getVideoTracks()[0];
+        const videoTrack = localStream?.getVideoTracks()[0];
         if (videoTrack) {
             videoTrack.enabled = !videoTrack.enabled;
             muteVideoButton.innerHTML = videoTrack.enabled ? 
@@ -231,15 +429,28 @@ document.addEventListener('DOMContentLoaded', () => {
     chatInput.addEventListener('keypress', (event) => {
         if (event.key === 'Enter' && !event.shiftKey) {
             event.preventDefault();
-            sendMessageButton.click();
+            const message = chatInput.value.trim();
+            if (message) {
+                addMessageToChat(message, 'You', true);
+                if (isInPublicRoom) {
+                    socket.emit('public-message', message);
+                } else {
+                    socket.emit('message', message);
+                }
+                chatInput.value = '';
+            }
         }
     });
 
     sendMessageButton.addEventListener('click', () => {
         const message = chatInput.value.trim();
-        if (message && socket) {
-            socket.emit('message', message);
-            displayMessage(message, true);
+        if (message) {
+            addMessageToChat(message, 'You', true);
+            if (isInPublicRoom) {
+                socket.emit('public-message', message);
+            } else {
+                socket.emit('message', message);
+            }
             chatInput.value = '';
         }
     });
@@ -251,6 +462,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (socket) {
             socket.emit('leave-room');
+            // Rejoin public room after ending call
+            socket.emit('join-public-room');
         }
         if (localStream) {
             localStream.getTracks().forEach(track => track.stop());
