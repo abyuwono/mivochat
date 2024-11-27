@@ -12,6 +12,7 @@ const createBodyStream = (body) => {
     const stream = new Readable();
     stream.push(body);
     stream.push(null);
+    stream._read = () => {}; // Required for Readable streams
     return stream;
 };
 
@@ -24,10 +25,12 @@ const createEventEmitter = () => {
                 listeners.set(event, []);
             }
             listeners.get(event).push(handler);
+            return this;
         },
         emit: (event, ...args) => {
             const eventListeners = listeners.get(event) || [];
             eventListeners.forEach(handler => handler(...args));
+            return true;
         },
         removeListener: (event, handler) => {
             const eventListeners = listeners.get(event) || [];
@@ -35,6 +38,14 @@ const createEventEmitter = () => {
             if (index !== -1) {
                 eventListeners.splice(index, 1);
             }
+            return this;
+        },
+        once: (event, handler) => {
+            const onceHandler = (...args) => {
+                handler(...args);
+                this.removeListener(event, onceHandler);
+            };
+            return this.on(event, onceHandler);
         }
     };
 };
@@ -144,7 +155,7 @@ exports.handler = async (event, context) => {
                     isBase64Encoded: false
                 };
 
-                // Create request-like object
+                // Create request-like object with stream capabilities
                 const req = {
                     method: event.httpMethod,
                     url: event.rawUrl || event.path,
@@ -158,14 +169,17 @@ exports.handler = async (event, context) => {
                         remoteAddress: event.headers['x-forwarded-for'] || event.requestContext?.identity?.sourceIp || '0.0.0.0',
                         encrypted: event.headers['x-forwarded-proto'] === 'https'
                     },
+                    _body: event.body,
+                    read: function() {
+                        const body = this._body;
+                        this._body = null;
+                        return body;
+                    },
+                    setEncoding: function(encoding) {
+                        this._encoding = encoding;
+                    },
                     ...createEventEmitter()
                 };
-
-                // Add body stream if needed
-                if (event.body) {
-                    req.body = event.body;
-                    req.bodyStream = createBodyStream(event.body);
-                }
 
                 // Create response-like object
                 const res = {
@@ -209,6 +223,18 @@ exports.handler = async (event, context) => {
                         resolve(response);
                     }
                 };
+
+                // Emit request data if body exists
+                if (event.body) {
+                    process.nextTick(() => {
+                        req.emit('data', event.body);
+                        req.emit('end');
+                    });
+                } else {
+                    process.nextTick(() => {
+                        req.emit('end');
+                    });
+                }
 
                 // Handle the request
                 io.engine.handleRequest(req, res);
