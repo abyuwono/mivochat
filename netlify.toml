@@ -1,7 +1,6 @@
 [build]
-  command = "npm install && npm run build:prod"
   publish = "public"
-  functions = "netlify/functions"
+  command = "npm install"
 
 [functions]
   directory = "netlify/functions"
