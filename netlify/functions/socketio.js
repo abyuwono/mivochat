@@ -1,9 +1,8 @@
 const { Server } = require('socket.io');
-const { parse } = require('querystring');
+const { createServer } = require('http');
 
-// In-memory storage for peer connections and sessions
+// In-memory storage for peer connections
 const peers = new Map();
-const sessions = new Map();
 let io = null;
 
 exports.handler = async (event, context) => {
@@ -24,18 +23,21 @@ exports.handler = async (event, context) => {
     try {
         // Initialize Socket.IO if not already initialized
         if (!io) {
-            io = new Server({
+            const httpServer = createServer();
+            io = new Server(httpServer, {
                 cors: {
                     origin: '*',
                     methods: ['GET', 'POST', 'OPTIONS'],
                     credentials: true
                 },
                 transports: ['polling', 'websocket'],
-                allowUpgrades: true,
-                pingTimeout: 20000,
+                path: '/socket.io',
+                serveClient: false,
+                pingTimeout: 60000,
                 pingInterval: 25000,
-                upgradeTimeout: 10000,
-                maxHttpBufferSize: 1e8
+                connectTimeout: 45000,
+                maxHttpBufferSize: 1e8,
+                allowEIO3: true
             });
 
             // Socket.IO event handlers
@@ -87,13 +89,8 @@ exports.handler = async (event, context) => {
             });
         }
 
-        // Parse query parameters
-        const queryParams = event.queryStringParameters || {};
-        const sid = queryParams.sid;
-        const transport = queryParams.transport;
-
         // Handle Socket.IO requests
-        if (event.path.startsWith('/socket.io/')) {
+        if (event.path.startsWith('/socket.io')) {
             const response = {
                 statusCode: 200,
                 headers: {
@@ -106,87 +103,34 @@ exports.handler = async (event, context) => {
                 }
             };
 
-            // Handle POST data for polling transport
-            if (event.httpMethod === 'POST' && transport === 'polling') {
-                const data = event.body || '';
-                const session = sessions.get(sid);
-
-                if (session) {
-                    session.emit('data', data);
-                    session.emit('end');
-                    response.body = 'ok';
-                } else {
-                    response.statusCode = 400;
-                    response.body = 'Session not found';
-                }
-
-                return response;
-            }
-
-            // Handle GET requests for polling transport
-            if (event.httpMethod === 'GET' && transport === 'polling') {
-                if (!sid) {
-                    // New connection, create session
-                    const sessionId = Math.random().toString(36).substr(2, 8);
-                    sessions.set(sessionId, {
-                        created: Date.now(),
-                        lastAccess: Date.now()
-                    });
-                    response.body = `96:0{"sid":"${sessionId}","upgrades":["websocket"],"pingInterval":25000,"pingTimeout":20000}2:40`;
-                } else {
-                    // Existing session
-                    const session = sessions.get(sid);
-                    if (session) {
-                        session.lastAccess = Date.now();
-                        response.body = '6:3probe';
-                    } else {
-                        response.statusCode = 400;
-                        response.body = 'Invalid session';
-                    }
-                }
-
-                return response;
-            }
-
-            // Handle WebSocket upgrade
-            if (transport === 'websocket') {
-                return {
-                    statusCode: 400,
-                    headers: {
-                        'Content-Type': 'text/plain'
-                    },
-                    body: 'WebSocket not supported in polling mode'
-                };
-            }
-
-            // Default Socket.IO response
             return await new Promise((resolve) => {
-                io.engine.handleRequest(
-                    {
-                        method: event.httpMethod,
-                        url: event.path,
-                        headers: event.headers,
-                        query: queryParams,
-                        body: event.body
+                const req = {
+                    method: event.httpMethod,
+                    url: event.path + (event.queryStringParameters ? '?' + new URLSearchParams(event.queryStringParameters).toString() : ''),
+                    headers: event.headers,
+                    body: event.body,
+                    query: event.queryStringParameters || {}
+                };
+
+                const res = {
+                    setHeader: (key, value) => {
+                        response.headers[key] = value;
                     },
-                    {
-                        setHeader: (key, value) => {
-                            response.headers[key] = value;
-                        },
-                        writeHead: (status, headers) => {
-                            response.statusCode = status;
-                            if (headers) {
-                                response.headers = { ...response.headers, ...headers };
-                            }
-                        },
-                        end: (data) => {
-                            if (data) {
-                                response.body = data;
-                            }
-                            resolve(response);
+                    writeHead: (status, headers) => {
+                        response.statusCode = status;
+                        if (headers) {
+                            response.headers = { ...response.headers, ...headers };
                         }
+                    },
+                    end: (data) => {
+                        if (data) {
+                            response.body = data;
+                        }
+                        resolve(response);
                     }
-                );
+                };
+
+                io.engine.handleRequest(req, res);
             });
         }
 
@@ -199,7 +143,7 @@ exports.handler = async (event, context) => {
             },
             body: JSON.stringify({ 
                 status: 'ok',
-                connections: peers.size || 0
+                connections: peers.size
             })
         };
     } catch (error) {
@@ -212,7 +156,8 @@ exports.handler = async (event, context) => {
             },
             body: JSON.stringify({
                 error: 'Internal server error',
-                message: error.message
+                message: error.message,
+                stack: error.stack
             })
         };
     }
