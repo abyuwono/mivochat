@@ -100,10 +100,11 @@ document.addEventListener('DOMContentLoaded', () => {
             updateUserCount(count);
         });
 
-        socket.on('peer-found', ({ initiator }) => {
+        socket.on('peer-found', async ({ isInitiator: initiator, peerNickname }) => {
             isInitiator = initiator;
             waitingScreen.classList.add('hidden');
-            startPeerConnection();
+            updateChatHeader(null, peerNickname);
+            await startPeerConnection();
         });
 
         socket.on('signal', handleSignalingData);
@@ -407,6 +408,80 @@ document.addEventListener('DOMContentLoaded', () => {
         return peerConnection;
     }
 
+    // Function to start peer connection
+    async function startPeerConnection() {
+        try {
+            // Get local stream if not already available
+            if (!localStream) {
+                localStream = await getLocalStream();
+            }
+
+            // Create and configure peer connection
+            const configuration = await getIceServers();
+            peerConnection = new RTCPeerConnection(configuration);
+
+            // Add local stream tracks to peer connection
+            localStream.getTracks().forEach(track => {
+                peerConnection.addTrack(track, localStream);
+            });
+
+            // Set up event handlers for peer connection
+            peerConnection.ontrack = ({ streams: [stream] }) => {
+                remoteVideo.srcObject = stream;
+                showSystemMessage('Connected to peer');
+            };
+
+            peerConnection.onicecandidate = ({ candidate }) => {
+                if (candidate) {
+                    socket.emit('signal', { type: 'candidate', candidate });
+                }
+            };
+
+            peerConnection.oniceconnectionstatechange = () => {
+                console.log('ICE Connection State:', peerConnection.iceConnectionState);
+                if (peerConnection.iceConnectionState === 'disconnected') {
+                    handlePeerDisconnected();
+                }
+            };
+
+            // If we're the initiator, create and send the offer
+            if (isInitiator) {
+                const offer = await peerConnection.createOffer();
+                await peerConnection.setLocalDescription(offer);
+                socket.emit('signal', { type: 'offer', offer });
+            }
+
+            showSystemMessage('Starting peer connection...');
+        } catch (error) {
+            console.error('Error in startPeerConnection:', error);
+            showSystemMessage('Failed to start peer connection: ' + error.message);
+        }
+    }
+
+    // Handle signaling data
+    async function handleSignalingData(data) {
+        try {
+            if (!peerConnection) {
+                console.error('No peer connection available');
+                return;
+            }
+
+            if (data.type === 'offer') {
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
+                const answer = await peerConnection.createAnswer();
+                await peerConnection.setLocalDescription(answer);
+                socket.emit('signal', { type: 'answer', answer });
+            } else if (data.type === 'answer') {
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
+            } else if (data.type === 'candidate') {
+                await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+            }
+        } catch (error) {
+            console.error('Error handling signaling data:', error);
+            showSystemMessage('Signaling error: ' + error.message);
+        }
+    }
+
     // Update start button click handler
     startButton.addEventListener('click', async () => {
         try {
@@ -446,27 +521,6 @@ document.addEventListener('DOMContentLoaded', () => {
         // Find new peer
         socket.emit('find-peer');
     });
-
-    // Handle signaling data
-    async function handleSignalingData(data) {
-        try {
-            if (data.type === 'offer') {
-                await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
-                const answer = await peerConnection.createAnswer();
-                await peerConnection.setLocalDescription(answer);
-                socket.emit('signal', { type: 'answer', answer });
-            }
-            else if (data.type === 'answer') {
-                await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
-            }
-            else if (data.type === 'candidate') {
-                await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
-            }
-        } catch (error) {
-            console.error('Error handling signaling data:', error);
-            showSystemMessage('Connection error');
-        }
-    }
 
     // Handle peer disconnection
     function handlePeerDisconnected() {
