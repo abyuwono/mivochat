@@ -26,6 +26,30 @@ document.addEventListener('DOMContentLoaded', () => {
     let connectedPeers = {};
     let isConnected = false;
 
+    // Update connection status and UI elements
+    function updateConnectionStatus(isConnected, peerNickname = null) {
+        const chatHeader = document.querySelector('.chat-header');
+        const connectionStatus = document.querySelector('.connection-status');
+        const chatControls = document.querySelector('.chat-controls');
+        
+        if (!chatHeader || !connectionStatus || !chatControls) return;
+
+        if (isConnected && peerNickname) {
+            connectionStatus.textContent = 'Connected';
+            connectionStatus.className = 'connection-status connected';
+            chatControls.classList.remove('disabled');
+            chatInput.disabled = false;
+            sendMessageButton.disabled = false;
+        } else {
+            connectionStatus.textContent = 'Disconnected';
+            connectionStatus.className = 'connection-status disconnected';
+            chatControls.classList.add('disabled');
+            chatInput.disabled = true;
+            sendMessageButton.disabled = true;
+            chatInput.placeholder = 'Connect with a peer to start chatting...';
+        }
+    }
+
     // Update chat header to show connection info
     function updateChatHeader(roomId = null, peerNickname = null) {
         const chatHeader = document.querySelector('.chat-header');
@@ -61,6 +85,7 @@ document.addEventListener('DOMContentLoaded', () => {
             console.log('Connected to server:', socket.id);
             showSystemMessage('Connected to server');
             isConnected = true;
+            updateConnectionStatus(false);
         });
 
         socket.on('connect_error', (error) => {
@@ -71,9 +96,11 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
 
-        socket.on('disconnect', (reason) => {
-            console.log('Disconnected:', reason);
-            showSystemMessage('Disconnected: ' + reason);
+        socket.on('disconnect', () => {
+            console.log('Disconnected from server');
+            showSystemMessage('Disconnected from server');
+            isConnected = false;
+            updateConnectionStatus(false);
         });
 
         socket.on('room-joined', ({ roomId }) => {
@@ -103,13 +130,16 @@ document.addEventListener('DOMContentLoaded', () => {
         socket.on('peer-found', async ({ isInitiator: initiator, peerNickname }) => {
             isInitiator = initiator;
             waitingScreen.classList.add('hidden');
-            updateChatHeader(null, peerNickname);
+            updateConnectionStatus(true, peerNickname);
             await startPeerConnection();
         });
 
         socket.on('signal', handleSignalingData);
 
-        socket.on('peer-disconnected', handlePeerDisconnected);
+        socket.on('peer-disconnected', () => {
+            handlePeerDisconnected();
+            updateConnectionStatus(false);
+        });
 
         socket.on('message', ({ sender, text, timestamp, nickname }) => {
             addMessageToChat(text, nickname, sender === socket.id);
@@ -146,29 +176,6 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!peerConnection) {
                 createPeerConnection(true);
             }
-        });
-
-        socket.on('peer-disconnected', () => {
-            currentRoomId = null;
-            connectedPeers = {};
-            updateChatHeader();
-            showSystemMessage('Peer disconnected');
-            
-            // Clean up WebRTC connection
-            if (peerConnection) {
-                peerConnection.close();
-                peerConnection = null;
-            }
-            
-            // Hide remote video
-            if (remoteVideo.srcObject) {
-                remoteVideo.srcObject.getTracks().forEach(track => track.stop());
-                remoteVideo.srcObject = null;
-            }
-            
-            // Enable start chat button
-            startButton.disabled = false;
-            nextButton.disabled = true;
         });
 
         // Join public room by default
@@ -537,9 +544,14 @@ document.addEventListener('DOMContentLoaded', () => {
             remoteVideo.srcObject.getTracks().forEach(track => track.stop());
             remoteVideo.srcObject = null;
         }
+        if (peerConnection) {
+            peerConnection.close();
+            peerConnection = null;
+        }
         showSystemMessage('Peer disconnected');
         nextButton.disabled = false;
         waitingScreen.classList.add('hidden');
+        updateConnectionStatus(false);
     }
 
     // Format timestamp
@@ -583,6 +595,23 @@ document.addEventListener('DOMContentLoaded', () => {
         chatMessages.scrollTop = chatMessages.scrollHeight;
     }
 
+    // Add message input handlers
+    chatInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey && !chatInput.disabled) {
+            e.preventDefault();
+            sendMessageButton.click();
+        }
+    });
+
+    sendMessageButton.addEventListener('click', () => {
+        if (chatInput.disabled || !chatInput.value.trim()) return;
+        
+        const message = chatInput.value.trim();
+        socket.emit('send-message', message);
+        addMessageToChat(message, myNickname, true);
+        chatInput.value = '';
+    });
+
     muteAudioButton.addEventListener('click', () => {
         const audioTrack = localStream?.getAudioTracks()[0];
         if (audioTrack) {
@@ -625,35 +654,6 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (error) {
             console.error('Error sharing screen:', error);
             showSystemMessage('Error sharing screen');
-        }
-    });
-
-    chatInput.addEventListener('keypress', (event) => {
-        if (event.key === 'Enter' && !event.shiftKey) {
-            event.preventDefault();
-            const message = chatInput.value.trim();
-            if (message) {
-                addMessageToChat(message, 'You', true);
-                if (isInPublicRoom) {
-                    socket.emit('public-message', message);
-                } else {
-                    socket.emit('message', message);
-                }
-                chatInput.value = '';
-            }
-        }
-    });
-
-    sendMessageButton.addEventListener('click', () => {
-        const message = chatInput.value.trim();
-        if (message) {
-            addMessageToChat(message, 'You', true);
-            if (isInPublicRoom) {
-                socket.emit('public-message', message);
-            } else {
-                socket.emit('message', message);
-            }
-            chatInput.value = '';
         }
     });
 

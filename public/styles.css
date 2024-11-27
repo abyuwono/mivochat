@@ -213,15 +213,16 @@ video {
     font-size: 0.8em;
     padding: 4px 8px;
     border-radius: 12px;
+    font-weight: 500;
 }
 
 .connection-status.connected {
-    background: rgba(46, 213, 115, 0.2);
+    background-color: rgba(46, 213, 115, 0.2);
     color: #2ed573;
 }
 
 .connection-status.disconnected {
-    background: rgba(255, 71, 87, 0.2);
+    background-color: rgba(255, 71, 87, 0.2);
     color: #ff4757;
 }
 
@@ -317,6 +318,35 @@ video {
 .message-input button:hover {
     background: #ff5252;
     transform: translateY(-2px);
+}
+
+.chat-controls.disabled {
+    opacity: 0.6;
+    pointer-events: none;
+    position: relative;
+}
+
+.chat-controls.disabled::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    backdrop-filter: blur(2px);
+}
+
+#messageInput:disabled {
+    background-color: rgba(255, 255, 255, 0.05);
+    color: rgba(255, 255, 255, 0.3);
+    cursor: not-allowed;
+}
+
+#sendMessage:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
 }
 
 /* Waiting Screen */
