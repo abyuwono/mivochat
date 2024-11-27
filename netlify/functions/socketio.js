@@ -1,9 +1,43 @@
 const { Server } = require('socket.io');
-const { parse } = require('url');
+const { Server: HttpServer } = require('http');
+const { Readable } = require('stream');
 
 // In-memory storage for peer connections
 const peers = new Map();
 let io = null;
+let httpServer = null;
+
+// Create a readable stream from request body
+const createBodyStream = (body) => {
+    const stream = new Readable();
+    stream.push(body);
+    stream.push(null);
+    return stream;
+};
+
+// Create an event emitter-like object
+const createEventEmitter = () => {
+    const listeners = new Map();
+    return {
+        on: (event, handler) => {
+            if (!listeners.has(event)) {
+                listeners.set(event, []);
+            }
+            listeners.get(event).push(handler);
+        },
+        emit: (event, ...args) => {
+            const eventListeners = listeners.get(event) || [];
+            eventListeners.forEach(handler => handler(...args));
+        },
+        removeListener: (event, handler) => {
+            const eventListeners = listeners.get(event) || [];
+            const index = eventListeners.indexOf(handler);
+            if (index !== -1) {
+                eventListeners.splice(index, 1);
+            }
+        }
+    };
+};
 
 exports.handler = async (event, context) => {
     // Handle preflight requests
@@ -21,9 +55,11 @@ exports.handler = async (event, context) => {
     }
 
     try {
-        // Initialize Socket.IO if not already initialized
-        if (!io) {
-            io = new Server({
+        // Initialize HTTP Server and Socket.IO if not already initialized
+        if (!httpServer || !io) {
+            httpServer = new HttpServer();
+            
+            io = new Server(httpServer, {
                 cors: {
                     origin: '*',
                     methods: ['GET', 'POST', 'OPTIONS'],
@@ -36,7 +72,8 @@ exports.handler = async (event, context) => {
                 pingTimeout: 20000,
                 pingInterval: 25000,
                 allowEIO3: true,
-                cookie: false
+                cookie: false,
+                perMessageDeflate: false
             });
 
             // Socket.IO event handlers
@@ -92,9 +129,8 @@ exports.handler = async (event, context) => {
         const isSocketIoRequest = event.path.startsWith('/socket.io/');
         
         if (isSocketIoRequest) {
-            const { pathname, query } = parse(event.path, true);
-
             return await new Promise((resolve) => {
+                // Create response object
                 const response = {
                     statusCode: 200,
                     headers: {
@@ -104,50 +140,77 @@ exports.handler = async (event, context) => {
                         'Access-Control-Allow-Headers': '*',
                         'Access-Control-Allow-Credentials': 'true',
                         'Cache-Control': 'no-cache'
-                    }
+                    },
+                    isBase64Encoded: false
                 };
 
+                // Create request-like object
                 const req = {
                     method: event.httpMethod,
-                    url: event.path,
+                    url: event.rawUrl || event.path,
                     headers: {
                         ...event.headers,
-                        'x-forwarded-for': event.headers['x-forwarded-for'] || event.requestContext?.identity?.sourceIp || '0.0.0.0',
-                        'x-real-ip': event.headers['x-real-ip'] || event.requestContext?.identity?.sourceIp || '0.0.0.0'
+                        'content-type': event.headers['content-type'] || 'application/octet-stream',
+                        'content-length': event.body ? Buffer.byteLength(event.body) : 0,
+                        'x-forwarded-for': event.headers['x-forwarded-for'] || event.requestContext?.identity?.sourceIp || '0.0.0.0'
                     },
                     connection: {
                         remoteAddress: event.headers['x-forwarded-for'] || event.requestContext?.identity?.sourceIp || '0.0.0.0',
                         encrypted: event.headers['x-forwarded-proto'] === 'https'
-                    }
+                    },
+                    ...createEventEmitter()
                 };
 
+                // Add body stream if needed
+                if (event.body) {
+                    req.body = event.body;
+                    req.bodyStream = createBodyStream(event.body);
+                }
+
+                // Create response-like object
                 const res = {
+                    ...createEventEmitter(),
                     setHeader: (key, value) => {
-                        response.headers[key] = value;
+                        response.headers[key.toLowerCase()] = value;
                     },
-                    removeHeader: () => {},
-                    getHeader: () => {},
+                    removeHeader: (key) => {
+                        delete response.headers[key.toLowerCase()];
+                    },
+                    getHeader: (key) => response.headers[key.toLowerCase()],
                     writeHead: (status, headers) => {
                         response.statusCode = status;
                         if (headers) {
-                            response.headers = { ...response.headers, ...headers };
+                            Object.entries(headers).forEach(([key, value]) => {
+                                response.headers[key.toLowerCase()] = value;
+                            });
                         }
                     },
                     write: (data) => {
                         if (data) {
-                            response.body = Buffer.from(data).toString('base64');
+                            const chunk = Buffer.isBuffer(data) ? data : Buffer.from(data);
+                            if (!response.body) {
+                                response.body = chunk.toString('base64');
+                            } else {
+                                response.body += chunk.toString('base64');
+                            }
                             response.isBase64Encoded = true;
                         }
                     },
                     end: (data) => {
                         if (data) {
-                            response.body = Buffer.from(data).toString('base64');
+                            const chunk = Buffer.isBuffer(data) ? data : Buffer.from(data);
+                            if (!response.body) {
+                                response.body = chunk.toString('base64');
+                            } else {
+                                response.body += chunk.toString('base64');
+                            }
                             response.isBase64Encoded = true;
                         }
                         resolve(response);
                     }
                 };
 
+                // Handle the request
                 io.engine.handleRequest(req, res);
             });
         }
@@ -161,7 +224,7 @@ exports.handler = async (event, context) => {
             },
             body: JSON.stringify({ 
                 status: 'ok',
-                connections: peers.size
+                connections: peers.size || 0
             })
         };
     } catch (error) {
@@ -174,8 +237,7 @@ exports.handler = async (event, context) => {
             },
             body: JSON.stringify({
                 error: 'Internal server error',
-                message: error.message,
-                stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+                message: error.message
             })
         };
     }
