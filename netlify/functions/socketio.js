@@ -21,23 +21,21 @@ const users = new Map(); // socketId -> { nickname }
 let waitingUsers = [];
 
 exports.handler = async function(event, context) {
-    // Only allow POST and GET methods
-    if (event.httpMethod !== 'POST' && event.httpMethod !== 'GET') {
-        return {
-            statusCode: 405,
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ error: 'Method Not Allowed' })
-        };
-    }
-
     // Handle WebSocket upgrade
-    const isWebSocket = event.headers['upgrade']?.toLowerCase() === 'websocket';
-    if (!isWebSocket) {
-        return {
-            statusCode: 426,
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ error: 'Upgrade Required' })
-        };
+    if (event.httpMethod === 'GET') {
+        const headers = event.headers || {};
+        const isWebSocket = headers.upgrade?.toLowerCase() === 'websocket';
+        
+        if (isWebSocket) {
+            return {
+                statusCode: 101,
+                headers: {
+                    'Upgrade': 'websocket',
+                    'Connection': 'Upgrade',
+                    'Sec-WebSocket-Accept': headers['sec-websocket-key']
+                }
+            };
+        }
     }
 
     const io = new Server({
@@ -54,7 +52,9 @@ exports.handler = async function(event, context) {
         upgradeTimeout: 30000,
         allowEIO3: true,
         serveClient: false,
-        maxHttpBufferSize: 1e8
+        maxHttpBufferSize: 1e8,
+        perMessageDeflate: false,
+        httpCompression: true
     });
 
     io.on('connection', (socket) => {

@@ -62,7 +62,11 @@ document.addEventListener('DOMContentLoaded', () => {
             autoConnect: true,
             forceNew: true,
             withCredentials: false,
-            timeout: 20000
+            timeout: 20000,
+            upgrade: true,
+            rememberUpgrade: true,
+            secure: true,
+            rejectUnauthorized: false
         });
 
         socket.on('connect', () => {
@@ -74,9 +78,9 @@ document.addEventListener('DOMContentLoaded', () => {
             console.error('Connection error:', error);
             showSystemMessage('Connection error: ' + error.message);
             // Try to reconnect with polling if websocket fails
-            if (socket.io.opts.transports.includes('websocket')) {
+            if (socket.io.opts.transports[0] === 'websocket') {
                 console.log('Falling back to polling transport');
-                socket.io.opts.transports = ['polling'];
+                socket.io.opts.transports = ['polling', 'websocket'];
                 socket.connect();
             }
         });
