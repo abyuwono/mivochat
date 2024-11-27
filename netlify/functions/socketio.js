@@ -1,10 +1,9 @@
 const { Server } = require('socket.io');
-const { Server: EngineServer } = require('engine.io');
+const { parse } = require('url');
 
 // In-memory storage for peer connections
 const peers = new Map();
 let io = null;
-let engineServer = null;
 
 exports.handler = async (event, context) => {
     // Handle preflight requests
@@ -22,25 +21,22 @@ exports.handler = async (event, context) => {
     }
 
     try {
-        // Initialize Engine.IO and Socket.IO if not already initialized
-        if (!engineServer || !io) {
-            engineServer = new EngineServer({
+        // Initialize Socket.IO if not already initialized
+        if (!io) {
+            io = new Server({
                 cors: {
                     origin: '*',
                     methods: ['GET', 'POST', 'OPTIONS'],
                     credentials: true
                 },
                 transports: ['polling', 'websocket'],
-                allowEIO3: true,
-                pingTimeout: 20000,
-                pingInterval: 25000,
-                path: '/socket.io/'
-            });
-
-            io = new Server(engineServer, {
                 path: '/socket.io/',
                 serveClient: false,
                 connectTimeout: 45000,
+                pingTimeout: 20000,
+                pingInterval: 25000,
+                allowEIO3: true,
+                cookie: false
             });
 
             // Socket.IO event handlers
@@ -96,6 +92,8 @@ exports.handler = async (event, context) => {
         const isSocketIoRequest = event.path.startsWith('/socket.io/');
         
         if (isSocketIoRequest) {
+            const { pathname, query } = parse(event.path, true);
+
             return await new Promise((resolve) => {
                 const response = {
                     statusCode: 200,
@@ -111,10 +109,16 @@ exports.handler = async (event, context) => {
 
                 const req = {
                     method: event.httpMethod,
-                    url: event.path + (event.queryStringParameters ? '?' + new URLSearchParams(event.queryStringParameters).toString() : ''),
-                    headers: event.headers,
-                    body: event.body,
-                    query: event.queryStringParameters || {}
+                    url: event.path,
+                    headers: {
+                        ...event.headers,
+                        'x-forwarded-for': event.headers['x-forwarded-for'] || event.requestContext?.identity?.sourceIp || '0.0.0.0',
+                        'x-real-ip': event.headers['x-real-ip'] || event.requestContext?.identity?.sourceIp || '0.0.0.0'
+                    },
+                    connection: {
+                        remoteAddress: event.headers['x-forwarded-for'] || event.requestContext?.identity?.sourceIp || '0.0.0.0',
+                        encrypted: event.headers['x-forwarded-proto'] === 'https'
+                    }
                 };
 
                 const res = {
@@ -131,20 +135,20 @@ exports.handler = async (event, context) => {
                     },
                     write: (data) => {
                         if (data) {
-                            response.body = data.toString('base64');
+                            response.body = Buffer.from(data).toString('base64');
                             response.isBase64Encoded = true;
                         }
                     },
                     end: (data) => {
                         if (data) {
-                            response.body = data.toString('base64');
+                            response.body = Buffer.from(data).toString('base64');
                             response.isBase64Encoded = true;
                         }
                         resolve(response);
                     }
                 };
 
-                engineServer.handleRequest(req, res);
+                io.engine.handleRequest(req, res);
             });
         }
 
