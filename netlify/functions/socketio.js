@@ -1,9 +1,7 @@
 const { Server } = require('socket.io');
 const { createServer } = require('http');
 const { parse } = require('url');
-
-// Create a minimal HTTP server
-const httpServer = createServer();
+const { Readable } = require('stream');
 
 // In-memory storage for peer connections
 const peers = new Map();
@@ -12,7 +10,7 @@ let io = null;
 // Initialize Socket.IO if not already initialized
 function initializeSocketIO() {
     if (!io) {
-        io = new Server(httpServer, {
+        io = new Server({
             cors: {
                 origin: '*',
                 methods: ['GET', 'POST', 'OPTIONS'],
@@ -83,6 +81,15 @@ function initializeSocketIO() {
     return io;
 }
 
+// Create a readable stream from a string
+function createReadableStream(str) {
+    const readable = new Readable();
+    readable._read = () => {}; // Required but noop
+    readable.push(str);
+    readable.push(null);
+    return readable;
+}
+
 // Handle Socket.IO request
 async function handleSocketIORequest(event) {
     const io = initializeSocketIO();
@@ -92,33 +99,45 @@ async function handleSocketIORequest(event) {
     const cleanPath = path.replace('/.netlify/functions/socketio', '');
     const parsedUrl = parse(cleanPath, true);
     
-    // Create request object
-    const req = {
+    // Create a proper request object that mimics a Node.js HTTP request
+    const req = Object.assign(createReadableStream(event.body || ''), {
         method: event.httpMethod,
         url: cleanPath + (cleanPath.includes('?') ? '' : '?' + new URLSearchParams(event.queryStringParameters || {}).toString()),
         headers: event.headers || {},
         query: parsedUrl.query || event.queryStringParameters || {},
-        body: event.body,
         connection: {
             remoteAddress: event.requestContext?.identity?.sourceIp || '0.0.0.0'
         }
-    };
+    });
 
-    // Create response object
+    // Create a proper response object that mimics a Node.js HTTP response
     let statusCode = 200;
     let responseHeaders = {};
     let responseBody = '';
+    let headersSent = false;
 
     const res = {
         writeHead(status, headers) {
-            statusCode = status;
-            if (headers) {
-                responseHeaders = { ...responseHeaders, ...headers };
+            if (!headersSent) {
+                statusCode = status;
+                if (headers) {
+                    responseHeaders = { ...responseHeaders, ...headers };
+                }
+                headersSent = true;
             }
             return this;
         },
         setHeader(key, value) {
-            responseHeaders[key] = value;
+            if (!headersSent) {
+                responseHeaders[key] = value;
+            }
+            return this;
+        },
+        getHeader(key) {
+            return responseHeaders[key];
+        },
+        removeHeader(key) {
+            delete responseHeaders[key];
             return this;
         },
         write(data) {
@@ -129,14 +148,11 @@ async function handleSocketIORequest(event) {
             if (data) {
                 responseBody += data;
             }
-        },
-        getHeader(key) {
-            return responseHeaders[key];
         }
     };
 
     try {
-        // Handle the request
+        // Handle the Socket.IO request
         await new Promise((resolve, reject) => {
             io.engine.handleRequest(req, res);
             // Give some time for the engine to process
@@ -151,7 +167,7 @@ async function handleSocketIORequest(event) {
                 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
                 'Access-Control-Allow-Headers': '*',
                 'Access-Control-Allow-Credentials': 'true',
-                'Cache-Control': 'no-cache, no-store, must-revalidate',
+                'Cache-Control': 'no-cache',
                 'Content-Type': responseHeaders['Content-Type'] || 'application/octet-stream'
             },
             body: responseBody
@@ -164,7 +180,11 @@ async function handleSocketIORequest(event) {
                 'Content-Type': 'application/json',
                 'Access-Control-Allow-Origin': '*'
             },
-            body: JSON.stringify({ error: 'Socket.IO request handling error', details: error.message })
+            body: JSON.stringify({ 
+                error: 'Socket.IO request handling error', 
+                details: error.message,
+                stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+            })
         };
     }
 }
@@ -179,9 +199,7 @@ exports.handler = async (event, context) => {
                 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
                 'Access-Control-Allow-Headers': '*',
                 'Access-Control-Allow-Credentials': 'true',
-                'Cache-Control': 'no-cache, no-store, must-revalidate',
-                'Pragma': 'no-cache',
-                'Expires': '0'
+                'Cache-Control': 'no-cache'
             }
         };
     }
@@ -199,19 +217,13 @@ exports.handler = async (event, context) => {
             },
             body: JSON.stringify({ error: 'Method not allowed' })
         };
-
     } catch (error) {
         console.error('Handler error:', error);
         return {
             statusCode: 500,
             headers: {
                 'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-                'Access-Control-Allow-Headers': '*',
-                'Cache-Control': 'no-cache, no-store, must-revalidate',
-                'Pragma': 'no-cache',
-                'Expires': '0'
+                'Access-Control-Allow-Origin': '*'
             },
             body: JSON.stringify({
                 error: 'Internal server error',
