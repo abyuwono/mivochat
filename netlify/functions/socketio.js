@@ -1,18 +1,22 @@
 const { Server } = require('socket.io');
-const serverless = require('serverless-http');
 const express = require('express');
+const serverless = require('serverless-http');
 const { uniqueNamesGenerator, colors, animals } = require('unique-names-generator');
 
 const app = express();
+const server = express();
+
+// Socket.IO setup
 const io = new Server({
     cors: {
         origin: '*',
         methods: ['GET', 'POST', 'OPTIONS'],
         credentials: true
     },
-    path: '/socket.io',
-    transports: ['polling', 'websocket'],
-    allowEIO3: true
+    path: '/',
+    transports: ['polling'],
+    allowEIO3: true,
+    serveClient: false
 });
 
 // Room management
@@ -172,9 +176,15 @@ app.use((req, res, next) => {
 });
 
 // Socket.IO handler
-app.post('/', (req, res) => {
-    io.handleUpgrade(req, req.socket, Buffer.alloc(0));
-    res.status(200).json({ status: 'ok' });
+app.use((req, res) => {
+    if (req.method === 'POST') {
+        io.handleUpgrade(req, req.socket, Buffer.alloc(0));
+        res.status(200).json({ status: 'ok' });
+    } else if (req.method === 'GET') {
+        io.handleRequest(req, res);
+    } else {
+        res.status(405).json({ error: 'Method not allowed' });
+    }
 });
 
 // Export the serverless handler

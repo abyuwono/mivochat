@@ -55,18 +55,14 @@ document.addEventListener('DOMContentLoaded', () => {
     function initializeSocket() {
         const socketURL = window.location.origin;
         socket = io(socketURL, {
-            path: '/socket.io',
+            path: '/.netlify/functions/socketio',
             transports: ['polling'],
             reconnectionAttempts: 3,
             reconnectionDelay: 1000,
             autoConnect: true,
             forceNew: true,
             withCredentials: false,
-            timeout: 10000,
-            extraHeaders: {
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Methods': 'GET, POST, OPTIONS'
-            }
+            timeout: 10000
         });
 
         socket.on('connect', () => {
