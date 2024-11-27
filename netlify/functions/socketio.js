@@ -1,8 +1,12 @@
 const { Server } = require('socket.io');
 const express = require('express');
+const { createServer } = require('http');
 
 // Create express app
 const app = express();
+
+// Create HTTP server
+const httpServer = createServer(app);
 
 // In-memory storage for peer connections
 const peers = new Map();
@@ -25,14 +29,19 @@ app.use((req, res, next) => {
 // Initialize Socket.IO if not already initialized
 function initializeSocketIO() {
     if (!io) {
-        io = new Server({
+        io = new Server(httpServer, {
             cors: {
                 origin: '*',
                 methods: ['GET', 'POST', 'OPTIONS'],
                 credentials: true
             },
             transports: ['polling'],
-            path: '/.netlify/functions/socketio'
+            path: '/.netlify/functions/socketio',
+            serveClient: false,
+            pingTimeout: 10000,
+            pingInterval: 5000,
+            connectTimeout: 45000,
+            allowEIO3: true
         });
 
         // Socket.IO event handlers
@@ -90,6 +99,39 @@ function initializeSocketIO() {
     return io;
 }
 
+// Socket.IO handler function
+function handleSocketRequest(req, res) {
+    return new Promise((resolve, reject) => {
+        try {
+            const io = initializeSocketIO();
+            
+            // Create a fake upgrade event
+            const upgradeEvent = {
+                req: req,
+                socket: {
+                    setTimeout: () => {},
+                    setNoDelay: () => {},
+                    setKeepAlive: () => {}
+                },
+                head: Buffer.alloc(0)
+            };
+
+            // Handle the Socket.IO request
+            io.engine.handleRequest(req, res);
+            
+            // Handle potential WebSocket upgrade
+            if (req.headers['upgrade'] === 'websocket') {
+                io.engine.handleUpgrade(upgradeEvent);
+            }
+            
+            resolve();
+        } catch (error) {
+            console.error('Socket.IO error:', error);
+            reject(error);
+        }
+    });
+}
+
 exports.handler = async (event, context) => {
     // Handle preflight requests
     if (event.httpMethod === 'OPTIONS') {
@@ -108,16 +150,16 @@ exports.handler = async (event, context) => {
     }
 
     try {
-        // Initialize Socket.IO
-        const io = initializeSocketIO();
-
         if (event.httpMethod === 'GET' || event.httpMethod === 'POST') {
             // Create request-like object
             const req = {
                 method: event.httpMethod,
                 url: event.path,
                 headers: event.headers,
-                query: event.queryStringParameters || {}
+                query: event.queryStringParameters || {},
+                connection: {
+                    remoteAddress: event.requestContext?.identity?.sourceIp || '0.0.0.0'
+                }
             };
 
             // Create response-like object
@@ -134,15 +176,7 @@ exports.handler = async (event, context) => {
             };
 
             // Handle Socket.IO request
-            await new Promise((resolve, reject) => {
-                try {
-                    io.engine.handleRequest(req, res);
-                    resolve();
-                } catch (error) {
-                    console.error('Socket.IO error:', error);
-                    reject(error);
-                }
-            });
+            await handleSocketRequest(req, res);
 
             return {
                 statusCode: res.statusCode,
@@ -164,6 +198,7 @@ exports.handler = async (event, context) => {
             statusCode: 405,
             body: JSON.stringify({ error: 'Method not allowed' })
         };
+
     } catch (error) {
         console.error('Handler error:', error);
         return {
