@@ -56,17 +56,13 @@ document.addEventListener('DOMContentLoaded', () => {
         const socketURL = window.location.origin;
         socket = io(socketURL, {
             path: '/socket.io',
-            transports: ['polling', 'websocket'],
-            reconnectionAttempts: 5,
+            transports: ['polling'],
+            reconnectionAttempts: 3,
             reconnectionDelay: 1000,
             autoConnect: true,
             forceNew: true,
             withCredentials: false,
-            timeout: 20000,
-            upgrade: true,
-            rememberUpgrade: true,
-            secure: true,
-            rejectUnauthorized: false,
+            timeout: 10000,
             extraHeaders: {
                 'Access-Control-Allow-Origin': '*',
                 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS'
@@ -81,12 +77,7 @@ document.addEventListener('DOMContentLoaded', () => {
         socket.on('connect_error', (error) => {
             console.error('Connection error:', error);
             showSystemMessage('Connection error: ' + error.message);
-            // Try to reconnect with polling if websocket fails
-            if (socket.io.opts.transports[0] === 'websocket') {
-                console.log('Falling back to polling transport');
-                socket.io.opts.transports = ['polling', 'websocket'];
-                socket.connect();
-            }
+            socket.connect();
         });
 
         socket.on('disconnect', (reason) => {

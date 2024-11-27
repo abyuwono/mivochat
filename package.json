@@ -6,7 +6,7 @@
   "type": "commonjs",
   "scripts": {
     "start": "node server.js",
-    "build": "mkdir -p public && cp -r index.html styles.css script.js public/ && npm install",
+    "build": "mkdir -p public && cp -r index.html styles.css script.js public/",
     "dev": "nodemon server.js"
   },
   "dependencies": {
@@ -14,7 +14,8 @@
     "socket.io": "^4.7.2",
     "socket.io-client": "^4.7.2",
     "unique-names-generator": "^4.7.1",
-    "@netlify/functions": "^2.0.0"
+    "@netlify/functions": "^2.0.0",
+    "serverless-http": "^3.2.0"
   },
   "devDependencies": {
     "nodemon": "^2.0.22"
