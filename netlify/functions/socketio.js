@@ -1,12 +1,10 @@
 const { Server } = require('socket.io');
-const { createServer } = require('http');
+const { Server: EngineServer } = require('engine.io');
 
 // In-memory storage for peer connections
 const peers = new Map();
 let io = null;
-
-// Create a dummy HTTP server for Socket.IO
-const httpServer = createServer();
+let engineServer = null;
 
 exports.handler = async (event, context) => {
     // Handle preflight requests
@@ -24,18 +22,25 @@ exports.handler = async (event, context) => {
     }
 
     try {
-        // Initialize Socket.IO if not already initialized
-        if (!io) {
-            io = new Server(httpServer, {
+        // Initialize Engine.IO and Socket.IO if not already initialized
+        if (!engineServer || !io) {
+            engineServer = new EngineServer({
                 cors: {
                     origin: '*',
                     methods: ['GET', 'POST', 'OPTIONS'],
                     credentials: true
                 },
                 transports: ['polling', 'websocket'],
-                path: '/socket.io',
+                allowEIO3: true,
+                pingTimeout: 20000,
+                pingInterval: 25000,
+                path: '/socket.io/'
+            });
+
+            io = new Server(engineServer, {
+                path: '/socket.io/',
                 serveClient: false,
-                allowEIO3: true
+                connectTimeout: 45000,
             });
 
             // Socket.IO event handlers
@@ -106,31 +111,40 @@ exports.handler = async (event, context) => {
 
                 const req = {
                     method: event.httpMethod,
-                    url: event.path,
+                    url: event.path + (event.queryStringParameters ? '?' + new URLSearchParams(event.queryStringParameters).toString() : ''),
                     headers: event.headers,
                     body: event.body,
-                    rawBody: event.body
+                    query: event.queryStringParameters || {}
                 };
 
                 const res = {
                     setHeader: (key, value) => {
                         response.headers[key] = value;
                     },
+                    removeHeader: () => {},
+                    getHeader: () => {},
                     writeHead: (status, headers) => {
                         response.statusCode = status;
                         if (headers) {
                             response.headers = { ...response.headers, ...headers };
                         }
                     },
+                    write: (data) => {
+                        if (data) {
+                            response.body = data.toString('base64');
+                            response.isBase64Encoded = true;
+                        }
+                    },
                     end: (data) => {
                         if (data) {
-                            response.body = data.toString();
+                            response.body = data.toString('base64');
+                            response.isBase64Encoded = true;
                         }
                         resolve(response);
                     }
                 };
 
-                io.engine.attach(req, res);
+                engineServer.handleRequest(req, res);
             });
         }
 
