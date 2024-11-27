@@ -3,12 +3,28 @@
   command = "npm run build"
   functions = "netlify/functions"
 
+[functions]
+  node_bundler = "esbuild"
+
 [[redirects]]
   from = "/socket.io/*"
   to = "/.netlify/functions/socketio"
   status = 200
+  force = true
+  headers = {X-From = "Netlify"}
 
 [[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200
+
+[dev]
+  framework = "#custom"
+  command = "npm run dev"
+  targetPort = 3000
+  port = 8888
+  publish = "public"
+  autoLaunch = true
+
+[[plugins]]
+  package = "@netlify/plugin-functions-core"

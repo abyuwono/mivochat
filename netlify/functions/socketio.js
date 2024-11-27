@@ -20,24 +20,23 @@ const userToRoom = new Map(); // socketId -> roomId
 const users = new Map(); // socketId -> { nickname }
 let waitingUsers = [];
 
-exports.handler = function(event, context) {
+exports.handler = async function(event, context) {
+    // Only allow POST and GET methods
     if (event.httpMethod !== 'POST' && event.httpMethod !== 'GET') {
         return {
             statusCode: 405,
-            body: 'Method Not Allowed'
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ error: 'Method Not Allowed' })
         };
     }
 
     // Handle WebSocket upgrade
-    if (!event.headers.upgrade || event.headers.upgrade.toLowerCase() !== 'websocket') {
+    const isWebSocket = event.headers['upgrade']?.toLowerCase() === 'websocket';
+    if (!isWebSocket) {
         return {
             statusCode: 426,
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                message: 'Upgrade Required'
-            })
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ error: 'Upgrade Required' })
         };
     }
 
@@ -45,13 +44,17 @@ exports.handler = function(event, context) {
         cors: {
             origin: '*',
             methods: ['GET', 'POST'],
-            credentials: true
+            credentials: true,
+            allowedHeaders: ['*']
         },
-        path: '/.netlify/functions/socketio',
+        path: '/socket.io',
         transports: ['websocket', 'polling'],
-        pingTimeout: 10000,
-        pingInterval: 5000,
-        allowEIO3: true
+        pingTimeout: 20000,
+        pingInterval: 10000,
+        upgradeTimeout: 30000,
+        allowEIO3: true,
+        serveClient: false,
+        maxHttpBufferSize: 1e8
     });
 
     io.on('connection', (socket) => {
@@ -66,36 +69,36 @@ exports.handler = function(event, context) {
             socket.emit('nickname', nickname);
 
             // Handle disconnection
-            socket.on('disconnect', () => {
-                console.log('User disconnected:', socket.id);
+            socket.on('disconnect', (reason) => {
+                console.log(`User disconnected: ${socket.id}, reason: ${reason}`);
                 handleDisconnect(socket);
             });
 
             // Handle find peer request
             socket.on('find-peer', () => {
                 console.log('Finding peer for:', socket.id);
-                handleFindPeer(socket);
+                handleFindPeer(socket, io);
             });
 
             // Handle signaling data
             socket.on('signal', (data) => {
-                handleSignal(socket, data);
+                handleSignal(socket, data, io);
             });
 
             // Handle public room join
             socket.on('join-public-room', () => {
                 console.log('Joining public room:', socket.id);
-                handleJoinPublicRoom(socket);
+                handleJoinPublicRoom(socket, io);
             });
 
             // Handle messages
             socket.on('message', (data) => {
-                handleMessage(socket, data);
+                handleMessage(socket, data, io);
             });
 
             // Handle public messages
             socket.on('public-message', (data) => {
-                handlePublicMessage(socket, data);
+                handlePublicMessage(socket, data, io);
             });
 
             // Handle errors
@@ -113,11 +116,10 @@ exports.handler = function(event, context) {
     return {
         statusCode: 200,
         headers: {
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
+            'X-Socket-Server': 'Netlify Functions'
         },
-        body: JSON.stringify({
-            message: 'WebSocket connection established'
-        })
+        body: JSON.stringify({ message: 'WebSocket server ready' })
     };
 };
 
@@ -131,7 +133,7 @@ function handleDisconnect(socket) {
             if (room.users.length === 0) {
                 rooms.delete(roomId);
             } else {
-                io.to(roomId).emit('peer-disconnected');
+                socket.to(roomId).emit('peer-disconnected');
             }
         }
     }
@@ -140,7 +142,7 @@ function handleDisconnect(socket) {
     waitingUsers = waitingUsers.filter(id => id !== socket.id);
 }
 
-function handleFindPeer(socket) {
+function handleFindPeer(socket, io) {
     if (waitingUsers.length > 0 && waitingUsers[0] !== socket.id) {
         const peer = waitingUsers.shift();
         const roomId = generateRoomId();
@@ -159,20 +161,20 @@ function handleFindPeer(socket) {
     }
 }
 
-function handleSignal(socket, data) {
+function handleSignal(socket, data, io) {
     const roomId = userToRoom.get(socket.id);
     if (roomId) {
         const room = rooms.get(roomId);
         if (room) {
             const peer = room.users.find(id => id !== socket.id);
             if (peer) {
-                io.to(peer).emit('signal', data);
+                socket.to(peer).emit('signal', data);
             }
         }
     }
 }
 
-function handleJoinPublicRoom(socket) {
+function handleJoinPublicRoom(socket, io) {
     const publicRoomId = 'public';
     socket.join(publicRoomId);
     userToRoom.set(socket.id, publicRoomId);
@@ -197,7 +199,7 @@ function handleJoinPublicRoom(socket) {
     });
 }
 
-function handleMessage(socket, { text }) {
+function handleMessage(socket, { text }, io) {
     const roomId = userToRoom.get(socket.id);
     if (roomId) {
         const message = {
@@ -210,7 +212,7 @@ function handleMessage(socket, { text }) {
     }
 }
 
-function handlePublicMessage(socket, { text }) {
+function handlePublicMessage(socket, { text }, io) {
     const publicRoomId = 'public';
     const room = rooms.get(publicRoomId);
     if (room) {

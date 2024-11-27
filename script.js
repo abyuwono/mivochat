@@ -55,22 +55,30 @@ document.addEventListener('DOMContentLoaded', () => {
     function initializeSocket() {
         const socketURL = window.location.origin;
         socket = io(socketURL, {
-            path: '/.netlify/functions/socketio',
+            path: '/socket.io',
             transports: ['websocket', 'polling'],
             reconnectionAttempts: 5,
             reconnectionDelay: 1000,
             autoConnect: true,
-            forceNew: true
+            forceNew: true,
+            withCredentials: false,
+            timeout: 20000
         });
 
         socket.on('connect', () => {
-            console.log('Connected to server');
+            console.log('Connected to server:', socket.id);
             showSystemMessage('Connected to server');
         });
 
         socket.on('connect_error', (error) => {
             console.error('Connection error:', error);
             showSystemMessage('Connection error: ' + error.message);
+            // Try to reconnect with polling if websocket fails
+            if (socket.io.opts.transports.includes('websocket')) {
+                console.log('Falling back to polling transport');
+                socket.io.opts.transports = ['polling'];
+                socket.connect();
+            }
         });
 
         socket.on('disconnect', (reason) => {
