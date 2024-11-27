@@ -1,8 +1,12 @@
 const { Server } = require('socket.io');
+const { createServer } = require('http');
 
 // In-memory storage for peer connections
 const peers = new Map();
 let io = null;
+
+// Create a dummy HTTP server for Socket.IO
+const httpServer = createServer();
 
 exports.handler = async (event, context) => {
     // Handle preflight requests
@@ -22,14 +26,16 @@ exports.handler = async (event, context) => {
     try {
         // Initialize Socket.IO if not already initialized
         if (!io) {
-            io = new Server({
+            io = new Server(httpServer, {
                 cors: {
                     origin: '*',
                     methods: ['GET', 'POST', 'OPTIONS'],
                     credentials: true
                 },
                 transports: ['polling', 'websocket'],
-                path: '/socket.io'
+                path: '/socket.io',
+                serveClient: false,
+                allowEIO3: true
             });
 
             // Socket.IO event handlers
@@ -82,33 +88,49 @@ exports.handler = async (event, context) => {
         }
 
         // Handle Socket.IO requests
-        if (event.path.startsWith('/socket.io')) {
-            const req = {
-                method: event.httpMethod,
-                url: event.path,
-                headers: event.headers,
-                body: event.body
-            };
-
-            return new Promise((resolve) => {
-                io.engine.handleRequest(req, {
-                    setHeader: () => {},
-                    writeHead: () => {},
-                    end: (data) => {
-                        resolve({
-                            statusCode: 200,
-                            headers: {
-                                'Content-Type': 'application/octet-stream',
-                                'Access-Control-Allow-Origin': '*',
-                                'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-                                'Access-Control-Allow-Headers': '*',
-                                'Access-Control-Allow-Credentials': 'true',
-                                'Cache-Control': 'no-cache'
-                            },
-                            body: data
-                        });
+        const isSocketIoRequest = event.path.startsWith('/socket.io/');
+        
+        if (isSocketIoRequest) {
+            return await new Promise((resolve) => {
+                const response = {
+                    statusCode: 200,
+                    headers: {
+                        'Content-Type': 'application/octet-stream',
+                        'Access-Control-Allow-Origin': '*',
+                        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+                        'Access-Control-Allow-Headers': '*',
+                        'Access-Control-Allow-Credentials': 'true',
+                        'Cache-Control': 'no-cache'
                     }
-                });
+                };
+
+                const req = {
+                    method: event.httpMethod,
+                    url: event.path,
+                    headers: event.headers,
+                    body: event.body,
+                    rawBody: event.body
+                };
+
+                const res = {
+                    setHeader: (key, value) => {
+                        response.headers[key] = value;
+                    },
+                    writeHead: (status, headers) => {
+                        response.statusCode = status;
+                        if (headers) {
+                            response.headers = { ...response.headers, ...headers };
+                        }
+                    },
+                    end: (data) => {
+                        if (data) {
+                            response.body = data.toString();
+                        }
+                        resolve(response);
+                    }
+                };
+
+                io.engine.attach(req, res);
             });
         }
 
@@ -119,7 +141,10 @@ exports.handler = async (event, context) => {
                 'Content-Type': 'application/json',
                 'Access-Control-Allow-Origin': '*'
             },
-            body: JSON.stringify({ status: 'ok', connections: io ? io.engine.clientsCount : 0 })
+            body: JSON.stringify({ 
+                status: 'ok',
+                connections: peers.size
+            })
         };
     } catch (error) {
         console.error('Handler error:', error);
