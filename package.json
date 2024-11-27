@@ -2,26 +2,22 @@
   "name": "mivochat",
   "version": "1.0.0",
   "description": "WebRTC Video Chat Application",
-  "main": "index.js",
-  "type": "commonjs",
+  "main": "server.js",
   "scripts": {
-    "start": "netlify dev",
-    "build": "echo 'No build step required'",
+    "start": "node server.js",
     "dev": "nodemon server.js"
   },
   "dependencies": {
-    "@netlify/functions": "^2.0.0",
+    "cors": "^2.8.5",
     "express": "^4.18.2",
-    "serverless-http": "^3.2.0",
     "socket.io": "^4.7.2",
-    "socket.io-client": "^4.7.2",
     "unique-names-generator": "^4.7.1",
-    "http": "^0.0.1-security",
-    "url": "^0.11.3"
+    "uuid": "^9.0.1",
+    "node-fetch": "^2.7.0",
+    "dotenv": "^16.3.1"
   },
   "devDependencies": {
-    "nodemon": "^2.0.22",
-    "netlify-cli": "^17.7.0"
+    "nodemon": "^3.0.1"
   },
   "engines": {
     "node": ">=18.0.0"

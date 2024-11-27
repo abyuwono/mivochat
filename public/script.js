@@ -54,26 +54,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Initialize Socket.IO connection
     function initializeSocket() {
-        const socketURL = 'https://mivocom.netlify.app';
-        socket = io(socketURL, {
-            path: '/socket.io',
-            transports: ['polling', 'websocket'],
-            reconnectionAttempts: 5,
-            reconnectionDelay: 1000,
-            autoConnect: true,
-            forceNew: true,
-            withCredentials: false,
-            timeout: 60000,
-            pingTimeout: 60000,
-            pingInterval: 25000,
-            upgrade: true,
-            rememberUpgrade: true,
-            query: {},
-            extraHeaders: {
-                'Cache-Control': 'no-cache',
-                'Pragma': 'no-cache'
-            }
-        });
+        // Connect to Socket.IO server
+        socket = io(config.SOCKET_SERVER, config.SOCKET_OPTIONS);
 
         socket.on('connect', () => {
             console.log('Connected to server:', socket.id);

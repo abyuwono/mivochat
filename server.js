@@ -1,295 +1,134 @@
 const express = require('express');
-const http = require('http');
+const { createServer } = require('http');
 const { Server } = require('socket.io');
-const path = require('path');
-const fetch = require('node-fetch');
-require('dotenv').config();
-const { v4: uuidv4 } = require('uuid');
+const cors = require('cors');
 const { uniqueNamesGenerator, adjectives, colors, animals } = require('unique-names-generator');
+require('dotenv').config();
 
 const app = express();
-const server = http.createServer(app);
-const io = new Server(server, {
+const httpServer = createServer(app);
+const io = new Server(httpServer, {
     cors: {
-        origin: "*",
-        methods: ["GET", "POST"]
-    }
-});
-
-// Serve static files
-app.use(express.static(path.join(__dirname, '/')));
-app.use(express.json());
-
-// Cloudflare configuration
-const CLOUDFLARE_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID;
-const CLOUDFLARE_API_TOKEN = process.env.CLOUDFLARE_API_TOKEN;
-const CLOUDFLARE_API_BASE = `https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/stream`;
-
-// Create a new WebRTC stream
-app.post('/api/create-stream', async (req, res) => {
-    console.log('Creating new stream...');
-    try {
-        const response = await fetch(`${CLOUDFLARE_API_BASE}/live_inputs`, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${CLOUDFLARE_API_TOKEN}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                meta: { name: `Stream_${Date.now()}` },
-                recording: { mode: "automatic" }
-            })
-        });
-
-        const data = await response.json();
-        console.log('Stream creation response:', data);
-
-        if (!data.success) {
-            console.error('Stream creation failed:', data.errors);
-            throw new Error(data.errors[0].message);
-        }
-
-        res.json({
-            streamKey: data.result.uid,
-            rtmps: data.result.rtmps,
-            webRTC: data.result.webRTC,
-        });
-    } catch (error) {
-        console.error('Error creating stream:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// Get stream status
-app.get('/api/stream/:streamId', async (req, res) => {
-    console.log('Getting stream status for:', req.params.streamId);
-    try {
-        const response = await fetch(`${CLOUDFLARE_API_BASE}/live_inputs/${req.params.streamId}`, {
-            headers: {
-                'Authorization': `Bearer ${CLOUDFLARE_API_TOKEN}`
-            }
-        });
-
-        const data = await response.json();
-        console.log('Stream status response:', data);
-
-        if (!data.success) {
-            console.error('Stream status check failed:', data.errors);
-            throw new Error(data.errors[0].message);
-        }
-
-        res.json(data.result);
-    } catch (error) {
-        console.error('Error getting stream status:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// Add endpoint to get ICE server configuration
-app.get('/api/ice-servers', (req, res) => {
-    const iceServers = {
-        iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' },
-            {
-                urls: [
-                    'turn:turn.cloudflare.com:3478',
-                    'turns:turn.cloudflare.com:5349'
-                ],
-                username: process.env.CLOUDFLARE_ACCOUNT_ID,
-                credential: process.env.CLOUDFLARE_API_TOKEN
-            }
+        origin: [
+            "http://localhost:3000",
+            "https://mivocom.netlify.app",
+            "https://mivochat-production.up.railway.app"
         ],
-        iceCandidatePoolSize: 10
-    };
-    res.json(iceServers);
+        methods: ["GET", "POST"],
+        credentials: true,
+        allowedHeaders: ["*"]
+    },
+    transports: ['websocket', 'polling']
 });
 
-// Room management
-const rooms = new Map(); // roomId -> { users: [socketId], messages: [] }
-const userToRoom = new Map(); // socketId -> roomId
-const publicRooms = new Map(); // roomId -> { name: string, users: [socketId], messages: [] }
-const users = new Map(); // socketId -> { nickname }
+// Enable CORS for Express routes
+app.use(cors({
+    origin: [
+        "http://localhost:3000",
+        "https://mivocom.netlify.app",
+        "https://mivochat-production.up.railway.app"
+    ],
+    methods: ["GET", "POST"],
+    credentials: true,
+    allowedHeaders: ["*"]
+}));
 
-// Customize the name generator config for shorter names
-const nameConfig = {
-    dictionaries: [colors, animals],
-    separator: '',
-    length: 2,
-    style: 'capital'
+// Store connected peers
+const peers = new Map();
+
+// Generate random nickname
+const generateNickname = () => {
+    return uniqueNamesGenerator({
+        dictionaries: [adjectives, colors, animals],
+        separator: '',
+        style: 'capital'
+    });
 };
 
-// Generate nickname for a user
-function generateNickname() {
-    return uniqueNamesGenerator(nameConfig);
-}
-
-// Create default public room
-const DEFAULT_ROOM = 'public-chat';
-publicRooms.set(DEFAULT_ROOM, {
-    name: 'Public Chat Room',
-    users: [],
-    messages: [],
-    maxUsers: 50 // Maximum users in public room
-});
-
-// Queue for waiting users
-let waitingUsers = [];
-
+// Socket.IO connection handling
 io.on('connection', (socket) => {
+    console.log('Client connected:', socket.id);
+    peers.set(socket.id, { busy: false });
+
     // Generate and store nickname for the user
     const nickname = generateNickname();
-    users.set(socket.id, { nickname });
+    socket.nickname = nickname;
     
-    console.log(`User connected: ${socket.id} (${nickname})`);
-
-    // Join public room
-    socket.on('join-public-room', () => {
-        const publicRoom = publicRooms.get(DEFAULT_ROOM);
-        if (publicRoom) {
-            // Leave any existing room
-            const currentRoom = userToRoom.get(socket.id);
-            if (currentRoom) {
-                socket.leave(currentRoom);
-                const room = rooms.get(currentRoom);
-                if (room) {
-                    room.users = room.users.filter(id => id !== socket.id);
-                    if (room.users.length === 0) {
-                        rooms.delete(currentRoom);
-                    }
-                }
-            }
-
-            // Join public room
-            socket.join(DEFAULT_ROOM);
-            publicRoom.users.push(socket.id);
-            userToRoom.set(socket.id, DEFAULT_ROOM);
-
-            // Send room info and recent messages
-            socket.emit('public-room-joined', {
-                roomId: DEFAULT_ROOM,
-                name: publicRoom.name,
-                userCount: publicRoom.users.length,
-                recentMessages: publicRoom.messages.slice(-50), // Send last 50 messages
-                nickname: users.get(socket.id).nickname
-            });
-
-            // Notify all users in public room
-            io.to(DEFAULT_ROOM).emit('user-count-updated', {
-                userCount: publicRoom.users.length
-            });
-        }
-    });
+    socket.emit('nickname', nickname);
 
     // Handle find peer request
     socket.on('find-peer', () => {
-        console.log('User looking for peer:', socket.id);
-
-        if (waitingUsers.length > 0 && waitingUsers[0] !== socket.id) {
-            const peer = waitingUsers.shift();
-            const roomId = Date.now().toString();
+        const availablePeers = Array.from(peers.entries())
+            .filter(([id, peer]) => id !== socket.id && !peer.busy);
+        
+        if (availablePeers.length > 0) {
+            const [peerId, _] = availablePeers[0];
+            const roomId = `room_${Date.now()}`;
             
-            // Create room
-            rooms.set(roomId, {
-                users: [socket.id, peer],
-                messages: []
-            });
+            peers.set(socket.id, { busy: true, room: roomId });
+            peers.set(peerId, { busy: true, room: roomId });
             
-            // Store room mapping for both users
-            userToRoom.set(socket.id, roomId);
-            userToRoom.set(peer, roomId);
-            
-            // Join both users to the room
             socket.join(roomId);
-            io.sockets.sockets.get(peer)?.join(roomId);
+            io.sockets.sockets.get(peerId)?.join(roomId);
             
-            console.log(`Creating room: ${roomId} for users: ${socket.id} ${peer}`);
-            
-            // Notify both users about the connection with room ID and peer info
-            io.to(roomId).emit('peer-connected', {
-                roomId,
-                users: {
-                    [socket.id]: users.get(socket.id)?.nickname,
-                    [peer]: users.get(peer)?.nickname
-                }
+            socket.emit('peer-found', { 
+                isInitiator: true,
+                peerNickname: io.sockets.sockets.get(peerId)?.nickname || 'Anonymous'
             });
-        } else {
-            console.log(`No peers available, adding to waiting queue: ${socket.id}`);
-            waitingUsers.push(socket.id);
+            io.to(peerId).emit('peer-found', { 
+                isInitiator: false,
+                peerNickname: socket.nickname
+            });
         }
     });
 
     // Handle WebRTC signaling
     socket.on('signal', (data) => {
-        const roomId = userToRoom.get(socket.id);
-        if (!roomId) return;
-
-        const room = rooms.get(roomId);
-        if (!room) return;
-
-        const peer = room.users.find(id => id !== socket.id);
-        if (!peer) return;
-
-        console.log('Sending signal from', socket.id, 'to', peer);
-        io.to(peer).emit('signal', data);
+        const peer = peers.get(socket.id);
+        if (peer?.room) {
+            socket.to(peer.room).emit('signal', data);
+        }
     });
 
     // Handle chat message
     socket.on('send-message', (message) => {
-        const room = [...socket.rooms].find(room => room !== socket.id);
-        if (room) {
-            // Only emit to the peer, not back to sender
-            socket.to(room).emit('receive-message', {
+        const peer = peers.get(socket.id);
+        if (peer?.room) {
+            socket.to(peer.room).emit('receive-message', {
                 message,
-                nickname: users.get(socket.id)?.nickname || 'Anonymous'
+                nickname: socket.nickname || 'Anonymous'
             });
         }
     });
 
     // Handle disconnection
-    const handleDisconnect = () => {
-        console.log('User disconnected:', socket.id);
+    socket.on('disconnect', () => {
+        console.log('Client disconnected:', socket.id);
+        const peer = peers.get(socket.id);
         
-        // Remove from waiting queue
-        const waitingIndex = waitingUsers.indexOf(socket.id);
-        if (waitingIndex !== -1) {
-            waitingUsers.splice(waitingIndex, 1);
-        }
-
-        // Handle room cleanup
-        const roomId = userToRoom.get(socket.id);
-        if (roomId) {
-            if (roomId === DEFAULT_ROOM) {
-                // Handle public room disconnect
-                const publicRoom = publicRooms.get(DEFAULT_ROOM);
-                if (publicRoom) {
-                    publicRoom.users = publicRoom.users.filter(id => id !== socket.id);
-                    io.to(DEFAULT_ROOM).emit('user-count-updated', {
-                        userCount: publicRoom.users.length
-                    });
-                }
-            } else {
-                // Handle private room disconnect
-                const room = rooms.get(roomId);
-                if (room) {
-                    const peer = room.users.find(id => id !== socket.id);
-                    if (peer) {
-                        io.to(peer).emit('peer-disconnected');
-                        userToRoom.delete(peer);
-                    }
-                    rooms.delete(roomId);
+        if (peer?.room) {
+            socket.to(peer.room).emit('peer-disconnected');
+            // Free up peers in the room
+            for (const [id, p] of peers.entries()) {
+                if (p.room === peer.room) {
+                    peers.set(id, { busy: false });
                 }
             }
-            userToRoom.delete(socket.id);
         }
-        users.delete(socket.id);
-    };
+        peers.delete(socket.id);
+    });
+});
 
-    socket.on('disconnect', handleDisconnect);
-    socket.on('leave-room', handleDisconnect);
+// Basic health check endpoint
+app.get('/', (req, res) => {
+    res.json({ 
+        status: 'ok',
+        connections: peers.size,
+        uptime: process.uptime()
+    });
 });
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+httpServer.listen(PORT, () => {
+    console.log(`Socket.IO server running on port ${PORT}`);
 });
