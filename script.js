@@ -56,7 +56,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const socketURL = window.location.origin;
         socket = io(socketURL, {
             path: '/socket.io',
-            transports: ['websocket', 'polling'],
+            transports: ['polling', 'websocket'],
             reconnectionAttempts: 5,
             reconnectionDelay: 1000,
             autoConnect: true,
@@ -66,7 +66,11 @@ document.addEventListener('DOMContentLoaded', () => {
             upgrade: true,
             rememberUpgrade: true,
             secure: true,
-            rejectUnauthorized: false
+            rejectUnauthorized: false,
+            extraHeaders: {
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'GET, POST, OPTIONS'
+            }
         });
 
         socket.on('connect', () => {

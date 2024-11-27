@@ -32,10 +32,26 @@ exports.handler = async function(event, context) {
                 headers: {
                     'Upgrade': 'websocket',
                     'Connection': 'Upgrade',
-                    'Sec-WebSocket-Accept': headers['sec-websocket-key']
+                    'Sec-WebSocket-Accept': headers['sec-websocket-key'],
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+                    'Access-Control-Allow-Headers': '*'
                 }
             };
         }
+    }
+
+    // Handle OPTIONS request for CORS
+    if (event.httpMethod === 'OPTIONS') {
+        return {
+            statusCode: 204,
+            headers: {
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+                'Access-Control-Allow-Headers': '*',
+                'Access-Control-Max-Age': '86400'
+            }
+        };
     }
 
     const io = new Server({
@@ -46,7 +62,7 @@ exports.handler = async function(event, context) {
             allowedHeaders: ['*']
         },
         path: '/socket.io',
-        transports: ['websocket', 'polling'],
+        transports: ['polling', 'websocket'],
         pingTimeout: 20000,
         pingInterval: 10000,
         upgradeTimeout: 30000,
@@ -101,14 +117,8 @@ exports.handler = async function(event, context) {
                 handlePublicMessage(socket, data, io);
             });
 
-            // Handle errors
-            socket.on('error', (error) => {
-                console.error('Socket error:', error);
-                socket.emit('error', { message: 'Socket error occurred' });
-            });
-
         } catch (error) {
-            console.error('Error in socket connection:', error);
+            console.error('Socket error:', error);
             socket.emit('error', { message: 'Internal server error' });
         }
     });
@@ -116,10 +126,12 @@ exports.handler = async function(event, context) {
     return {
         statusCode: 200,
         headers: {
-            'Content-Type': 'application/json',
-            'X-Socket-Server': 'Netlify Functions'
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+            'Access-Control-Allow-Headers': '*',
+            'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ message: 'WebSocket server ready' })
+        body: JSON.stringify({ message: 'Socket.IO server is running' })
     };
 };
 
