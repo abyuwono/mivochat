@@ -2,8 +2,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // DOM Elements
     const localVideo = document.getElementById('localVideo');
     const remoteVideo = document.getElementById('remoteVideo');
-    const startButton = document.getElementById('startChat');
-    const nextButton = document.getElementById('nextChat');
+    const startButton = document.getElementById('startButton');
+    const stopButton = document.getElementById('stopButton');
+    const nextButton = document.getElementById('nextButton');
     const muteAudioButton = document.getElementById('muteAudio');
     const muteVideoButton = document.getElementById('muteVideo');
     const shareScreenButton = document.getElementById('shareScreen');
@@ -272,7 +273,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             // Enable the start chat button once we have local stream
-            document.getElementById('startChat').disabled = false;
+            document.getElementById('startButton').disabled = false;
             
             // Check if we're on mobile and show camera switch button if supported
             if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
@@ -545,62 +546,42 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // Update start button click handler
-    startButton.addEventListener('click', async () => {
-        try {
-            // Show waiting screen immediately
-            waitingScreen.classList.remove('hidden');
-            startButton.disabled = true;
-            showSystemMessage('Looking for a peer...');
-            
-            // Emit find-peer event
-            socket.emit('find-peer');
-        } catch (error) {
-            console.error('Error starting chat:', error);
-            showSystemMessage('Error starting chat: ' + error.message);
-            waitingScreen.classList.add('hidden');
-            startButton.disabled = false;
+    // Handle start button click
+    function handleStartClick() {
+        if (!localStream) {
+            getLocalStream().then(() => {
+                findPeer();
+            }).catch(handleError);
+        } else {
+            findPeer();
         }
-    });
+        startButton.classList.add('hidden');
+        stopButton.classList.remove('hidden');
+    }
 
-    // Update next button click handler
-    nextButton.addEventListener('click', () => {
-        // Show waiting screen
-        waitingScreen.classList.remove('hidden');
-        showSystemMessage('Looking for a new peer...');
-        
-        // Clean up current connection
-        if (peerConnection) {
-            peerConnection.close();
-            peerConnection = null;
-        }
-        
-        // Clear remote video
-        if (remoteVideo.srcObject) {
-            remoteVideo.srcObject.getTracks().forEach(track => track.stop());
-            remoteVideo.srcObject = null;
-        }
-        
-        // Find new peer
-        socket.emit('find-peer');
-    });
+    // Handle stop button click
+    function handleStopClick() {
+        handlePeerDisconnected();
+        socket.emit('leave-room');
+        startButton.classList.remove('hidden');
+        stopButton.classList.add('hidden');
+    }
 
     // Handle peer disconnection
     function handlePeerDisconnected() {
-        if (remoteVideo.srcObject) {
-            remoteVideo.srcObject.getTracks().forEach(track => track.stop());
-            remoteVideo.srcObject = null;
-        }
         if (peerConnection) {
             peerConnection.close();
             peerConnection = null;
         }
-        currentRoomId = null;
-        showSystemMessage('Peer disconnected');
-        nextButton.disabled = false;
-        waitingScreen.classList.add('hidden');
+        remoteVideo.srcObject = null;
+        startButton.classList.remove('hidden');
+        stopButton.classList.add('hidden');
         updateConnectionStatus(false);
     }
+
+    // Event listeners
+    startButton.addEventListener('click', handleStartClick);
+    stopButton.addEventListener('click', handleStopClick);
 
     // Format timestamp
     function formatTimestamp(timestamp) {

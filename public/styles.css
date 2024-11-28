@@ -89,27 +89,24 @@ nav {
 }
 
 .nav-button {
-    padding: 0.5rem 1rem;
+    padding: 8px 16px;
     border: none;
     border-radius: 20px;
-    background: var(--primary-color);
+    background-color: #2196f3;
     color: white;
+    font-size: 14px;
     cursor: pointer;
-    transition: all 0.3s ease;
-    font-size: 0.9rem;
-    white-space: nowrap;
-    flex-shrink: 0;
+    transition: background-color 0.3s ease;
+    margin-left: 10px;
 }
 
 .nav-button:hover {
-    background: #ff5252;
-    transform: translateY(-2px);
+    background-color: #1976d2;
 }
 
 .nav-button:disabled {
-    background: #ccc;
+    background-color: #ccc;
     cursor: not-allowed;
-    transform: none;
 }
 
 /* Mobile Responsive Design */
@@ -653,4 +650,8 @@ video {
         padding-top: max(0px, env(safe-area-inset-top));
         padding-bottom: max(0px, env(safe-area-inset-bottom));
     }
+}
+
+.hidden {
+    display: none !important;
 }
