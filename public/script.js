@@ -35,6 +35,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!chatHeader || !connectionStatus || !chatControls) return;
 
         if (isConnected && peerNickname) {
+            // Connected to a peer
             chatHeader.innerHTML = `
                 <div class="chat-header-main">
                     <h3>Chat Room</h3>
@@ -51,7 +52,20 @@ document.addEventListener('DOMContentLoaded', () => {
             chatInput.disabled = false;
             sendMessageButton.disabled = false;
             chatInput.placeholder = 'Type your message...';
+        } else if (socket && socket.connected) {
+            // Connected to server but not to a peer
+            chatHeader.innerHTML = `
+                <div class="chat-header-main">
+                    <h3>Chat Room</h3>
+                    <span class="connection-status waiting">Waiting</span>
+                </div>
+            `;
+            chatControls.classList.add('disabled');
+            chatInput.disabled = true;
+            sendMessageButton.disabled = true;
+            chatInput.placeholder = 'Waiting for peer connection...';
         } else {
+            // Not connected to server
             chatHeader.innerHTML = `
                 <div class="chat-header-main">
                     <h3>Chat Room</h3>
@@ -61,7 +75,7 @@ document.addEventListener('DOMContentLoaded', () => {
             chatControls.classList.add('disabled');
             chatInput.disabled = true;
             sendMessageButton.disabled = true;
-            chatInput.placeholder = 'Connect with a peer to start chatting...';
+            chatInput.placeholder = 'Connecting to server...';
         }
     }
 
