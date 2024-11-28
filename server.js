@@ -47,11 +47,13 @@ const peers = new Map();
 
 // Generate random nickname
 const generateNickname = () => {
-    return uniqueNamesGenerator({
+    const nickname = uniqueNamesGenerator({
         dictionaries: [adjectives, colors, animals],
         separator: '',
-        style: 'capital'
+        style: 'capital',
+        length: 3
     });
+    return nickname.slice(0, 12); // Limit to 12 characters
 };
 
 // API Routes

@@ -349,7 +349,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Update user count display
     function updateUserCount(count) {
         if (userCount) {
-            userCount.textContent = `${count} users online`;
+            userCount.textContent = `${count} online`;
         }
     }
 
