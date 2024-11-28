@@ -57,7 +57,7 @@ document.addEventListener('DOMContentLoaded', () => {
             
             // Update remote video overlay with peer's nickname
             if (remoteVideoOverlay) {
-                remoteVideoOverlay.textContent = peerNickname;
+                remoteVideoOverlay.textContent = `Chatting with ${peerNickname}`;
             }
         } else if (socket && socket.connected) {
             // Connected to server but not to a peer
@@ -74,7 +74,7 @@ document.addEventListener('DOMContentLoaded', () => {
             
             // Reset remote video overlay
             if (remoteVideoOverlay) {
-                remoteVideoOverlay.textContent = 'Waiting...';
+                remoteVideoOverlay.textContent = 'Looking for new friend online...';
             }
         } else {
             // Not connected to server
@@ -91,7 +91,7 @@ document.addEventListener('DOMContentLoaded', () => {
             
             // Reset remote video overlay
             if (remoteVideoOverlay) {
-                remoteVideoOverlay.textContent = 'Disconnected';
+                remoteVideoOverlay.textContent = 'Looking for new friend online...';
             }
         }
     }
@@ -169,7 +169,7 @@ document.addEventListener('DOMContentLoaded', () => {
             // Update UI to show peer's nickname
             const remoteVideoOverlay = document.querySelector('.remote-video-wrapper .video-overlay');
             if (remoteVideoOverlay) {
-                remoteVideoOverlay.textContent = peerNickname;
+                remoteVideoOverlay.textContent = `Chatting with ${peerNickname}`;
             }
             
             // Update connection status
@@ -612,8 +612,11 @@ document.addEventListener('DOMContentLoaded', () => {
             remoteVideo.srcObject.getTracks().forEach(track => track.stop());
             remoteVideo.srcObject = null;
         }
-        startButton.classList.remove('hidden');
-        stopButton.classList.add('hidden');
+        // Reset remote video overlay
+        const remoteVideoOverlay = document.querySelector('.remote-video-wrapper .video-overlay');
+        if (remoteVideoOverlay) {
+            remoteVideoOverlay.textContent = 'Looking for new friend online...';
+        }
         updateConnectionStatus(false);
     }
 
