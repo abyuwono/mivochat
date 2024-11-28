@@ -550,13 +550,39 @@ document.addEventListener('DOMContentLoaded', () => {
     function handleStartClick() {
         if (!localStream) {
             getLocalStream().then(() => {
-                findPeer();
+                startFindingPeer();
             }).catch(handleError);
         } else {
-            findPeer();
+            startFindingPeer();
         }
         startButton.classList.add('hidden');
         stopButton.classList.remove('hidden');
+    }
+
+    // Start finding a peer
+    function startFindingPeer() {
+        // Clean up any existing connection
+        if (peerConnection) {
+            peerConnection.close();
+            peerConnection = null;
+        }
+        
+        // Clear remote video
+        if (remoteVideo.srcObject) {
+            remoteVideo.srcObject.getTracks().forEach(track => track.stop());
+            remoteVideo.srcObject = null;
+        }
+
+        // Update UI
+        updateConnectionStatus(false);
+        const remoteVideoOverlay = document.querySelector('.remote-video-wrapper .video-overlay');
+        if (remoteVideoOverlay) {
+            remoteVideoOverlay.textContent = 'Waiting...';
+        }
+
+        // Emit find-peer event
+        console.log('Looking for a peer...');
+        socket.emit('find-peer');
     }
 
     // Handle stop button click
@@ -573,7 +599,10 @@ document.addEventListener('DOMContentLoaded', () => {
             peerConnection.close();
             peerConnection = null;
         }
-        remoteVideo.srcObject = null;
+        if (remoteVideo.srcObject) {
+            remoteVideo.srcObject.getTracks().forEach(track => track.stop());
+            remoteVideo.srcObject = null;
+        }
         startButton.classList.remove('hidden');
         stopButton.classList.add('hidden');
         updateConnectionStatus(false);
