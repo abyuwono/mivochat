@@ -31,25 +31,20 @@ document.addEventListener('DOMContentLoaded', () => {
     function updateConnectionStatus(isConnected, peerNickname = null, roomId = null) {
         const chatHeader = document.querySelector('.chat-header');
         const connectionStatus = document.querySelector('.connection-status');
+        const headerTitle = document.querySelector('.header-title');
         const chatControls = document.querySelector('.chat-controls');
         const remoteVideoOverlay = document.querySelector('.remote-video-wrapper .video-overlay');
         
-        if (!chatHeader || !connectionStatus || !chatControls) return;
+        if (!connectionStatus || !chatControls) return;
 
         if (isConnected && peerNickname) {
             // Connected to a peer
-            chatHeader.innerHTML = `
-                <div class="chat-header-main">
-                    <h3>Chat Room</h3>
-                    <span class="connection-status connected">Connected</span>
-                </div>
-                ${roomId ? `
-                <div class="chat-header-info">
-                    <span class="room-id">Room: ${roomId}</span>
-                    <span class="peer-name">Chatting with: ${peerNickname}</span>
-                </div>
-                ` : ''}
-            `;
+            if (headerTitle) {
+                headerTitle.textContent = `Chatting with ${peerNickname}`;
+            }
+            connectionStatus.textContent = 'Connected';
+            connectionStatus.className = 'connection-status connected';
+            
             chatControls.classList.remove('disabled');
             chatInput.disabled = false;
             sendMessageButton.disabled = false;
@@ -61,12 +56,12 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         } else if (socket && socket.connected) {
             // Connected to server but not to a peer
-            chatHeader.innerHTML = `
-                <div class="chat-header-main">
-                    <h3>Chat Room</h3>
-                    <span class="connection-status waiting">Waiting</span>
-                </div>
-            `;
+            if (headerTitle) {
+                headerTitle.textContent = 'Chat Room';
+            }
+            connectionStatus.textContent = 'Waiting';
+            connectionStatus.className = 'connection-status waiting';
+            
             chatControls.classList.add('disabled');
             chatInput.disabled = true;
             sendMessageButton.disabled = true;
@@ -78,12 +73,12 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         } else {
             // Not connected to server
-            chatHeader.innerHTML = `
-                <div class="chat-header-main">
-                    <h3>Chat Room</h3>
-                    <span class="connection-status disconnected">Disconnected</span>
-                </div>
-            `;
+            if (headerTitle) {
+                headerTitle.textContent = 'Chat Room';
+            }
+            connectionStatus.textContent = 'Disconnected';
+            connectionStatus.className = 'connection-status disconnected';
+            
             chatControls.classList.add('disabled');
             chatInput.disabled = true;
             sendMessageButton.disabled = true;
