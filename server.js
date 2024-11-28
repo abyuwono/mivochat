@@ -47,13 +47,22 @@ const peers = new Map();
 
 // Generate random nickname
 const generateNickname = () => {
-    const nickname = uniqueNamesGenerator({
-        dictionaries: [adjectives, colors],  // Using only 2 dictionaries for shorter names
+    const config = {
+        dictionaries: [adjectives, colors],
         separator: '',
         style: 'capital',
-        length: 2
-    });
-    return nickname.slice(0, 12);  // Ensure maximum 12 characters
+        length: 2,
+        // Use shorter word lists
+        maxWordsPerDictionary: 100
+    };
+    
+    let nickname = uniqueNamesGenerator(config);
+    // If still too long, take first 6 chars of each word
+    if (nickname.length > 12) {
+        const words = nickname.match(/[A-Z][a-z]+/g) || [];
+        nickname = words.map(word => word.slice(0, 6)).join('');
+    }
+    return nickname.slice(0, 12);
 };
 
 // API Routes
