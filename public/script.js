@@ -27,7 +27,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let isConnected = false;
 
     // Update connection status and UI elements
-    function updateConnectionStatus(isConnected, peerNickname = null) {
+    function updateConnectionStatus(isConnected, peerNickname = null, roomId = null) {
         const chatHeader = document.querySelector('.chat-header');
         const connectionStatus = document.querySelector('.connection-status');
         const chatControls = document.querySelector('.chat-controls');
@@ -35,14 +35,29 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!chatHeader || !connectionStatus || !chatControls) return;
 
         if (isConnected && peerNickname) {
-            connectionStatus.textContent = 'Connected';
-            connectionStatus.className = 'connection-status connected';
+            chatHeader.innerHTML = `
+                <div class="chat-header-main">
+                    <h3>Chat Room</h3>
+                    <span class="connection-status connected">Connected</span>
+                </div>
+                ${roomId ? `
+                <div class="chat-header-info">
+                    <span class="room-id">Room: ${roomId}</span>
+                    <span class="peer-name">Chatting with: ${peerNickname}</span>
+                </div>
+                ` : ''}
+            `;
             chatControls.classList.remove('disabled');
             chatInput.disabled = false;
             sendMessageButton.disabled = false;
+            chatInput.placeholder = 'Type your message...';
         } else {
-            connectionStatus.textContent = 'Disconnected';
-            connectionStatus.className = 'connection-status disconnected';
+            chatHeader.innerHTML = `
+                <div class="chat-header-main">
+                    <h3>Chat Room</h3>
+                    <span class="connection-status disconnected">Disconnected</span>
+                </div>
+            `;
             chatControls.classList.add('disabled');
             chatInput.disabled = true;
             sendMessageButton.disabled = true;
@@ -101,6 +116,7 @@ document.addEventListener('DOMContentLoaded', () => {
             showSystemMessage('Disconnected from server');
             isConnected = false;
             updateConnectionStatus(false);
+            handlePeerDisconnected();
         });
 
         socket.on('room-joined', ({ roomId }) => {
@@ -127,10 +143,11 @@ document.addEventListener('DOMContentLoaded', () => {
             updateUserCount(count);
         });
 
-        socket.on('peer-found', async ({ isInitiator: initiator, peerNickname }) => {
+        socket.on('peer-found', async ({ isInitiator: initiator, peerNickname, roomId }) => {
             isInitiator = initiator;
+            currentRoomId = roomId;
             waitingScreen.classList.add('hidden');
-            updateConnectionStatus(true, peerNickname);
+            updateConnectionStatus(true, peerNickname, roomId);
             await startPeerConnection();
         });
 
@@ -548,6 +565,7 @@ document.addEventListener('DOMContentLoaded', () => {
             peerConnection.close();
             peerConnection = null;
         }
+        currentRoomId = null;
         showSystemMessage('Peer disconnected');
         nextButton.disabled = false;
         waitingScreen.classList.add('hidden');

@@ -120,11 +120,13 @@ io.on('connection', (socket) => {
             
             socket.emit('peer-found', { 
                 isInitiator: true,
-                peerNickname: io.sockets.sockets.get(peerId)?.nickname || 'Anonymous'
+                peerNickname: io.sockets.sockets.get(peerId)?.nickname || 'Anonymous',
+                roomId: roomId
             });
             io.to(peerId).emit('peer-found', { 
                 isInitiator: false,
-                peerNickname: socket.nickname
+                peerNickname: socket.nickname,
+                roomId: roomId
             });
         }
     });
@@ -141,9 +143,11 @@ io.on('connection', (socket) => {
     socket.on('send-message', (message) => {
         const peer = peers.get(socket.id);
         if (peer?.room) {
-            socket.to(peer.room).emit('receive-message', {
-                message,
-                nickname: socket.nickname || 'Anonymous'
+            socket.to(peer.room).emit('message', {
+                sender: socket.id,
+                text: message,
+                timestamp: Date.now(),
+                nickname: socket.nickname
             });
         }
     });
