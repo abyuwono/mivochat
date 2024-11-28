@@ -31,6 +31,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const chatHeader = document.querySelector('.chat-header');
         const connectionStatus = document.querySelector('.connection-status');
         const chatControls = document.querySelector('.chat-controls');
+        const remoteVideoOverlay = document.querySelector('.remote-video-wrapper .video-overlay');
         
         if (!chatHeader || !connectionStatus || !chatControls) return;
 
@@ -52,6 +53,11 @@ document.addEventListener('DOMContentLoaded', () => {
             chatInput.disabled = false;
             sendMessageButton.disabled = false;
             chatInput.placeholder = 'Type your message...';
+            
+            // Update remote video overlay with peer's nickname
+            if (remoteVideoOverlay) {
+                remoteVideoOverlay.textContent = peerNickname;
+            }
         } else if (socket && socket.connected) {
             // Connected to server but not to a peer
             chatHeader.innerHTML = `
@@ -64,6 +70,11 @@ document.addEventListener('DOMContentLoaded', () => {
             chatInput.disabled = true;
             sendMessageButton.disabled = true;
             chatInput.placeholder = 'Waiting for peer connection...';
+            
+            // Reset remote video overlay
+            if (remoteVideoOverlay) {
+                remoteVideoOverlay.textContent = 'Waiting...';
+            }
         } else {
             // Not connected to server
             chatHeader.innerHTML = `
@@ -76,6 +87,11 @@ document.addEventListener('DOMContentLoaded', () => {
             chatInput.disabled = true;
             sendMessageButton.disabled = true;
             chatInput.placeholder = 'Connecting to server...';
+            
+            // Reset remote video overlay
+            if (remoteVideoOverlay) {
+                remoteVideoOverlay.textContent = 'Disconnected';
+            }
         }
     }
 
