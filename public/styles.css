@@ -279,20 +279,21 @@ video {
 }
 
 .connection-status {
-    font-size: 0.8rem;
-    padding: 0.25rem 0.75rem;
-    border-radius: 15px;
-    margin-left: 0.5rem;
+    padding: 4px 8px;
+    border-radius: 12px;
+    font-size: 14px;
+    font-weight: 500;
+    margin-right: 10px;
 }
 
 .connection-status.connected {
-    background: rgba(46, 213, 115, 0.2);
-    color: #2ed573;
+    background-color: #4caf50;
+    color: white;
 }
 
 .connection-status.disconnected {
-    background: rgba(255, 71, 87, 0.2);
-    color: #ff4757;
+    background-color: #f44336;
+    color: white;
 }
 
 .connection-status.waiting {

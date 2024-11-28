@@ -124,30 +124,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Initialize Socket.IO connection
     function initializeSocket() {
-        // Connect to Socket.IO server
-        socket = io(config.SOCKET_SERVER, config.SOCKET_OPTIONS);
+        socket = io(config.SOCKET_SERVER, {
+            transports: ['websocket', 'polling']
+        });
 
         socket.on('connect', () => {
-            console.log('Connected to server:', socket.id);
-            showSystemMessage('Connected to server');
-            isConnected = true;
+            console.log('Connected to server');
             updateConnectionStatus(false);
         });
 
-        socket.on('connect_error', (error) => {
-            console.error('Connection error:', error);
-            showSystemMessage('Connection error: ' + error.message);
-            if (!isConnected) {
-                setTimeout(() => socket.connect(), 2000);
-            }
-        });
-
-        socket.on('disconnect', () => {
-            console.log('Disconnected from server');
-            showSystemMessage('Disconnected from server');
-            isConnected = false;
-            updateConnectionStatus(false);
-            handlePeerDisconnected();
+        socket.on('user-count', (count) => {
+            updateUserCount(count);
         });
 
         socket.on('room-joined', ({ roomId }) => {
@@ -175,16 +162,38 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         socket.on('peer-found', async ({ isInitiator: initiator, peerNickname, roomId }) => {
+            console.log('Peer found:', peerNickname);
             isInitiator = initiator;
             currentRoomId = roomId;
-            waitingScreen.classList.add('hidden');
+            
+            // Update UI to show peer's nickname
+            const remoteVideoOverlay = document.querySelector('.remote-video-wrapper .video-overlay');
+            if (remoteVideoOverlay) {
+                remoteVideoOverlay.textContent = peerNickname;
+            }
+            
+            // Update connection status
             updateConnectionStatus(true, peerNickname, roomId);
+            
+            // Start WebRTC connection
             await startPeerConnection();
         });
 
         socket.on('signal', handleSignalingData);
 
         socket.on('peer-disconnected', () => {
+            console.log('Peer disconnected');
+            handlePeerDisconnected();
+            // Reset remote video overlay to Waiting...
+            const remoteVideoOverlay = document.querySelector('.remote-video-wrapper .video-overlay');
+            if (remoteVideoOverlay) {
+                remoteVideoOverlay.textContent = 'Waiting...';
+            }
+            updateConnectionStatus(false);
+        });
+
+        socket.on('disconnect', () => {
+            console.log('Disconnected from server');
             handlePeerDisconnected();
             updateConnectionStatus(false);
         });
