@@ -121,22 +121,27 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Initialize Socket.IO connection
     function initializeSocket() {
-        socket = io('http://mivochat-production.up.railway.app:8080', {
+        const serverUrl = 'https://mivochat-production.up.railway.app:8080';
+        console.log('Connecting to:', serverUrl);
+        
+        socket = io(serverUrl, {
             transports: ['websocket', 'polling'],
+            secure: true,
+            rejectUnauthorized: false,
             reconnection: true,
             reconnectionAttempts: 5,
             reconnectionDelay: 1000
         });
 
         socket.on('connect', () => {
-            console.log('Connected to Railway.app server');
+            console.log('Successfully connected to server');
             updateConnectionStatus(false);
         });
 
         socket.on('connect_error', (error) => {
-            console.error('Connection error:', error);
+            console.error('Connection error:', error.message);
             showSystemMessage('Connection error. Please check your internet connection.');
-            hideLoadingOverlay();  // Hide overlay if connection fails
+            hideLoadingOverlay();
         });
 
         socket.on('user-count', (count) => {
