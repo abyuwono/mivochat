@@ -121,11 +121,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Initialize Socket.IO connection
     function initializeSocket() {
-        socket = io();
+        socket = io('https://mivochat-production.up.railway.app:8080', {
+            transports: ['websocket', 'polling'],
+            secure: true,
+            reconnection: true,
+            rejectUnauthorized: false
+        });
 
         socket.on('connect', () => {
-            console.log('Connected to server');
+            console.log('Connected to Railway.app server');
             updateConnectionStatus(false);
+        });
+
+        socket.on('connect_error', (error) => {
+            console.error('Connection error:', error);
+            showSystemMessage('Connection error. Please check your internet connection.');
+            hideLoadingOverlay();  // Hide overlay if connection fails
         });
 
         socket.on('user-count', (count) => {
@@ -731,7 +742,7 @@ document.addEventListener('DOMContentLoaded', () => {
             
             const sender = peerConnection
                 .getSenders()
-                .find(s => s.track.kind === 'video');
+                .find(s => s.track?.kind === 'video');
                 
             await sender.replaceTrack(videoTrack);
             
