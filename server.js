@@ -142,6 +142,17 @@ io.on('connection', (socket) => {
         }
     });
 
+    // Handle cancel find peer
+    socket.on('cancel-find-peer', () => {
+        console.log('User cancelled peer search:', socket.id);
+        // Remove user from any waiting lists or search queues
+        const peer = peers.get(socket.id);
+        if (peer) {
+            peer.busy = false;
+            peer.room = null;
+        }
+    });
+
     // Handle WebRTC signaling
     socket.on('signal', (data) => {
         const peer = peers.get(socket.id);

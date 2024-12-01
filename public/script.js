@@ -14,6 +14,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const endCallButton = document.getElementById('endCall');
     const waitingScreen = document.getElementById('waiting-screen');
     const userCount = document.getElementById('userCount');
+    const loadingOverlay = document.querySelector('.loading-overlay');
+    const cancelButton = document.querySelector('.cancel-button');
 
     // Global variables
     let socket;
@@ -119,9 +121,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Initialize Socket.IO connection
     function initializeSocket() {
-        socket = io(config.SOCKET_SERVER, {
-            transports: ['websocket', 'polling']
-        });
+        socket = io();
 
         socket.on('connect', () => {
             console.log('Connected to server');
@@ -158,6 +158,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         socket.on('peer-found', async ({ isInitiator: initiator, peerNickname, roomId }) => {
             console.log('Peer found:', peerNickname);
+            hideLoadingOverlay();  // Hide overlay when peer is found
             isInitiator = initiator;
             currentRoomId = roomId;
             
@@ -178,6 +179,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         socket.on('peer-disconnected', () => {
             console.log('Peer disconnected');
+            hideLoadingOverlay();  // Hide overlay if peer disconnects during search
             handlePeerDisconnected();
             // Reset remote video overlay to Waiting...
             const remoteVideoOverlay = document.querySelector('.remote-video-wrapper .video-overlay');
@@ -189,6 +191,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         socket.on('disconnect', () => {
             console.log('Disconnected from server');
+            hideLoadingOverlay();  // Hide overlay if server disconnects
             handlePeerDisconnected();
             updateConnectionStatus(false);
         });
@@ -554,13 +557,25 @@ document.addEventListener('DOMContentLoaded', () => {
     function handleStartClick() {
         if (!localStream) {
             getLocalStream().then(() => {
+                showLoadingOverlay();
                 startFindingPeer();
             }).catch(handleError);
         } else {
+            showLoadingOverlay();
             startFindingPeer();
         }
         startButton.classList.add('hidden');
         stopButton.classList.remove('hidden');
+    }
+
+    // Show loading overlay
+    function showLoadingOverlay() {
+        loadingOverlay.classList.add('active');
+    }
+
+    // Hide loading overlay
+    function hideLoadingOverlay() {
+        loadingOverlay.classList.remove('active');
     }
 
     // Start finding a peer
@@ -618,6 +633,18 @@ document.addEventListener('DOMContentLoaded', () => {
     // Event listeners
     startButton.addEventListener('click', handleStartClick);
     stopButton.addEventListener('click', handleStopClick);
+    
+    // Cancel button listener
+    cancelButton.addEventListener('click', () => {
+        hideLoadingOverlay();
+        socket.emit('cancel-find-peer');
+        startButton.classList.remove('hidden');
+        stopButton.classList.add('hidden');
+        const remoteVideoOverlay = document.querySelector('.remote-video-wrapper .video-overlay');
+        if (remoteVideoOverlay) {
+            remoteVideoOverlay.textContent = 'Click "Find New Friend" button to start chatting';
+        }
+    });
 
     // Format timestamp
     function formatTimestamp(timestamp) {
