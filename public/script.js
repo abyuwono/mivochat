@@ -121,11 +121,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Initialize Socket.IO connection
     function initializeSocket() {
-        socket = io('https://mivochat-production.up.railway.app:8080', {
+        socket = io('http://mivochat-production.up.railway.app:8080', {
             transports: ['websocket', 'polling'],
-            secure: true,
             reconnection: true,
-            rejectUnauthorized: false
+            reconnectionAttempts: 5,
+            reconnectionDelay: 1000
         });
 
         socket.on('connect', () => {
